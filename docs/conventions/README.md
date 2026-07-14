@@ -1,6 +1,6 @@
 # Agent conventions (auto-synced — do not edit)
 
-Snapshots from the agent knowledge base (`~/projects/agents` @ `a624a02`).
+Snapshots from the agent knowledge base (`~/projects/agents` @ `4fe753e`).
 Edit the source docs there and re-run `sync-conventions.sh` — never edit these copies.
 
 - [AGENT.md](AGENT.md)

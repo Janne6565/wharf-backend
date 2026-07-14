@@ -1,4 +1,4 @@
-<!-- AUTO-SYNCED from agents KB: projects/wharf.md @ a624a02.
+<!-- AUTO-SYNCED from agents KB: projects/wharf.md @ 4fe753e.
      Do NOT edit here — edit the source in ~/projects/agents and re-run scripts/sync-conventions.sh. -->
 
 # Wharf
@@ -11,8 +11,10 @@ only ever holds ciphertext.
 
 - **Repos:**
   - github.com/Janne6565/wharf-tui — **flagship TUI client** (Go + Bubble Tea). Exists.
-  - `wharf-web` — landing + web auth flow (React + Vite). Planned.
-  - `wharf-backend` — sync + device-code auth + projects (Java 21 + Spring Boot). Planned.
+  - github.com/Janne6565/wharf-web — landing + web auth flow (React + **TanStack Start**,
+    deliberate upgrade from plain Vite SPA for future landing-page SSR). Exists.
+  - github.com/Janne6565/wharf-backend — sync + device-code auth (Java 21 + Spring Boot).
+    Exists. Projects/team endpoints still planned.
   - `wharf-mobile` — companion app (React Native + Expo). Planned.
   - `wharf-deployment` — Kustomize + ArgoCD. Planned.
 - **Local:** clone the repo(s) above into `~/projects/wharf/<repo-name>/` (multi-repo, one
@@ -44,8 +46,21 @@ invite by email, roles (owner/admin/member); private keys are never shared.
   (Elm architecture) + Lip Gloss + `x/ansi`. Single static binary, no root. This is the
   portfolio's **first Go+Bubble Tea TUI** — a deliberate deviation from the house
   React/Spring stack, justified by the "single binary, no root" client requirement.
-- **Web / backend / mobile (planned):** house stack — React+Vite (web), Java 21+Spring
-  Boot with JWT/jjwt (backend), React Native+Expo (mobile), Kustomize+ArgoCD (deploy).
+- **Web:** TanStack Start (React 19, Bun, Tailwind, TanStack Router/Query, Orval,
+  react-hook-form+Zod, typed i18n). Auth routes are `ssr:false` — all crypto is
+  client-only: argon2id via **hash-wasm** (libsodium.js can't do parallelism=4),
+  XChaCha20 via libsodium-wrappers (CJS-aliased — its ESM entry is broken), and a
+  TS port of the WHARFV vault format proven byte-compatible with the Go
+  implementation via a committed fixture.
+- **Backend:** Java 21 + Spring Boot per house AUTH.md (jjwt access/refresh,
+  `tokenVersion` claim for mass revocation, Bucket4j, Flyway, PostgreSQL/H2).
+  Zero-knowledge credential contract (documented in wharf-backend README):
+  masterKey = argon2id(password, salt=SHA-256(email)[0:16], t=3/m=64MiB/p=4);
+  authKey / recoveryAuthKey = HKDF-SHA256 with infos `wharf/auth/v1` /
+  `wharf/recovery-auth/v1`; server bcrypt-hashes those keys and stores the vault
+  as an opaque blob. Device pairing is **web→terminal**: web issues an 8-char code
+  (`POST /device-codes`), TUI exchanges it (`POST /device-codes/exchange`).
+- **Mobile (planned):** React Native+Expo. **Deploy (planned):** Kustomize+ArgoCD.
 
 ## Status
 - **wharf-tui:** **usable SSH client** (v1 milestone done, 2026-07-14). Real SSH via
@@ -61,8 +76,22 @@ invite by email, roles (owner/admin/member); private keys are never shared.
   typed store (`internal/store`). Host CRUD forms, `~/.ssh/config` import
   (`internal/sshcfg`), async reachability probes (`internal/probe`), ed25519 keygen +
   `~/.ssh` scan (`internal/keys`). `--demo` preserves the design prototype. Account
-  sign-in/projects remain **simulated** pending `wharf-backend`. Roadmap next: port
-  forwarding, sync client.
+  sign-in/projects remain **simulated** pending the TUI sync client. Roadmap next: port
+  forwarding, sync client against the now-real backend.
+- **wharf-backend:** **v1 auth/vault/pairing API done** (2026-07-14): register/login/
+  refresh (COOKIE|DIRECT token modes), recovery verify/reset (rotates code, bumps
+  `tokenVersion` to revoke all sessions), device-code issue/exchange (one-time,
+  pessimistic-locked), vault GET/PUT with optimistic versioning. Hardened after
+  review: pre-decode base64 size cap, bcrypt timing equalization against user
+  enumeration, XFF only trusted behind proxy, Caffeine-backed rate buckets,
+  fail-closed prod secret guard. 25 tests green; `openapi.json` committed at repo
+  root (Orval source). Projects/team endpoints + deployment still open.
+- **wharf-web:** **web auth flow done** (2026-07-14): the 5 design screens (signup →
+  recovery code → device pairing / signin → recover) pixel-faithful to
+  `Wharf Web Auth.dc.html`. Client-side WHARFV vault create/unlock/re-encrypt with
+  byte-compat proven against the Go vault via committed fixture; 17-check E2E suite
+  against the live backend (opt-in `E2E=1`). Landing page still open (the reason
+  for TanStack Start). Design sources copied to `~/projects/wharf/design/`.
 
 ## Notable (stands out vs other projects)
 - **Only Go + Bubble Tea TUI** in the portfolio (alongside Cosy's Go/Rust as non-house
