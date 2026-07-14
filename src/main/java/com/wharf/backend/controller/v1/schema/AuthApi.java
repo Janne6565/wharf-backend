@@ -25,10 +25,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public interface AuthApi {
 
     @PostMapping("/register")
-    @Operation(operationId = "register", summary = "Create a new zero-knowledge account")
+    @Operation(operationId = "register",
+            summary = "Create a new zero-knowledge account",
+            description = "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.")
     @ApiResponse(responseCode = "201", description = "Account created")
     @ApiResponse(responseCode = "409", description = "Email already registered")
-    ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request);
+    ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request,
+                                          HttpServletResponse response);
 
     @PostMapping("/login")
     @Operation(operationId = "login",
@@ -59,8 +62,10 @@ public interface AuthApi {
     @PostMapping("/recover/reset")
     @Operation(operationId = "recoverReset",
             summary = "Re-encrypt the vault under a new password and rotate the recovery code",
-            description = "Atomically replaces the credential hashes and vault, invalidates the old recovery code and revokes all existing sessions.")
+            description = "Atomically replaces the credential hashes and vault, invalidates the old recovery code and revokes all existing sessions. "
+                    + "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.")
     @ApiResponse(responseCode = "200", description = "Reset complete; new tokens issued")
     @ApiResponse(responseCode = "401", description = "Recovery code does not match")
-    ResponseEntity<AuthResponse> recoverReset(@Valid @RequestBody RecoveryResetRequest request);
+    ResponseEntity<AuthResponse> recoverReset(@Valid @RequestBody RecoveryResetRequest request,
+                                              HttpServletResponse response);
 }

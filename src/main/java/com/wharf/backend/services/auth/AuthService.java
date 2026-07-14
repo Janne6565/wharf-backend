@@ -6,10 +6,8 @@ import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
 import com.wharf.backend.model.action.RegisterRequest;
-import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.TokenMode;
-import com.wharf.backend.model.core.TokenPair;
 import com.wharf.backend.model.core.UserDto;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
@@ -68,7 +66,7 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
+    public TokenIssue register(RegisterRequest request) {
         String email = normalizeEmail(request.email());
         if (userRepository.existsByEmail(email)) {
             throw new EmailAlreadyRegisteredException();
@@ -94,7 +92,7 @@ public class AuthService {
         vaultService.createInitialVault(user.getId(), request.vault());
 
         log.debug("Registered new account {}", user.getId());
-        return new AuthResponse(UserMapper.toDto(user), issuePair(user));
+        return issue(user, request.tokenModeOrDefault());
     }
 
     @Transactional(readOnly = true)
@@ -131,7 +129,7 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResponse recoverReset(RecoveryResetRequest request) {
+    public TokenIssue recoverReset(RecoveryResetRequest request) {
         UserEntity user = requireRecoveryMatch(request.email(), request.recoveryAuthKey());
 
         user.setAuthKeyHash(passwordEncoder.encode(request.newAuthKey()));
@@ -144,7 +142,7 @@ public class AuthService {
 
         log.debug("Recovery reset completed for account {} (token version now v{})",
                 user.getId(), user.getTokenVersion());
-        return new AuthResponse(UserMapper.toDto(user), issuePair(user));
+        return issue(user, request.tokenModeOrDefault());
     }
 
     private UserEntity requireRecoveryMatch(String email, String recoveryAuthKey) {
@@ -163,10 +161,6 @@ public class AuthService {
                 jwtService.issueIdentityToken(user),
                 jwtService.issueRefreshToken(user),
                 mode);
-    }
-
-    private TokenPair issuePair(UserEntity user) {
-        return new TokenPair(jwtService.issueIdentityToken(user), jwtService.issueRefreshToken(user));
     }
 
     private String normalizeEmail(String email) {

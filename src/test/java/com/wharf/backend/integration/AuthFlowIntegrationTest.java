@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -41,6 +42,7 @@ class AuthFlowIntegrationTest {
     private static final String EMAIL = "deniz@acme.io";
     private static final String AUTH_KEY = "auth-key-v1-base64==";
     private static final String RECOVERY_KEY = "recovery-key-v1-base64==";
+    private static final String REFRESH_COOKIE_NAME = "wharf_refresh";
 
     private String base64(String plain) {
         return Base64.getEncoder().encodeToString(plain.getBytes(StandardCharsets.UTF_8));
@@ -63,6 +65,14 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
         assertThat(json(registered).path("user").path("email").asText()).isEqualTo(EMAIL);
+        // Register defaults to COOKIE mode: the refresh token is set as an httpOnly cookie
+        // and must be omitted from the body so the browser never holds it in JS-readable state.
+        assertThat(registered.getResponse().getHeaders(HttpHeaders.SET_COOKIE))
+                .anyMatch(header -> header.startsWith(REFRESH_COOKIE_NAME + "=")
+                        && header.contains("HttpOnly"));
+        assertThat(json(registered).path("tokens").path("accessToken").asText()).isNotBlank();
+        JsonNode registerRefresh = json(registered).path("tokens").path("refreshToken");
+        assertThat(registerRefresh.isNull() || registerRefresh.isMissingNode()).isTrue();
 
         // Duplicate registration is rejected
         mockMvc.perform(post("/api/v1/auth/register")

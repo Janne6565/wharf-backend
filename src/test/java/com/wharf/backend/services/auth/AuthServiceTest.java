@@ -5,7 +5,6 @@ import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RegisterRequest;
-import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
@@ -72,12 +71,13 @@ class AuthServiceTest {
         when(jwtService.issueIdentityToken(any())).thenReturn("id-token");
         when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
 
-        AuthResponse response = authService.register(
-                new RegisterRequest("Deniz@Acme.io ", "authKey", "recoveryKey", "dmF1bHQ="));
+        AuthService.TokenIssue issue = authService.register(
+                new RegisterRequest("Deniz@Acme.io ", "authKey", "recoveryKey", "dmF1bHQ=", TokenMode.DIRECT));
 
-        assertThat(response.user().email()).isEqualTo("deniz@acme.io");
-        assertThat(response.tokens().accessToken()).isEqualTo("id-token");
-        assertThat(response.tokens().refreshToken()).isEqualTo("refresh-token");
+        assertThat(issue.user().email()).isEqualTo("deniz@acme.io");
+        assertThat(issue.accessToken()).isEqualTo("id-token");
+        assertThat(issue.refreshToken()).isEqualTo("refresh-token");
+        assertThat(issue.mode()).isEqualTo(TokenMode.DIRECT);
         verify(vaultService).createInitialVault(any(UUID.class), eq("dmF1bHQ="));
     }
 
@@ -86,7 +86,7 @@ class AuthServiceTest {
         when(userRepository.existsByEmail("dupe@acme.io")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.register(
-                new RegisterRequest("dupe@acme.io", "a", "r", "dmF1bHQ=")))
+                new RegisterRequest("dupe@acme.io", "a", "r", "dmF1bHQ=", null)))
                 .isInstanceOf(EmailAlreadyRegisteredException.class);
     }
 
@@ -143,12 +143,13 @@ class AuthServiceTest {
         when(jwtService.issueIdentityToken(user)).thenReturn("id-token");
         when(jwtService.issueRefreshToken(user)).thenReturn("refresh-token");
 
-        AuthResponse response = authService.recoverReset(new RecoveryResetRequest(
-                "deniz@acme.io", "recoveryKey", "newAuth", "newRecovery", "bmV3"));
+        AuthService.TokenIssue issue = authService.recoverReset(new RecoveryResetRequest(
+                "deniz@acme.io", "recoveryKey", "newAuth", "newRecovery", "bmV3", TokenMode.DIRECT));
 
         assertThat(user.getTokenVersion()).isEqualTo(1);
         assertThat(user.getAuthKeyHash()).isEqualTo("new-hash");
-        assertThat(response.tokens().accessToken()).isEqualTo("id-token");
+        assertThat(issue.accessToken()).isEqualTo("id-token");
+        assertThat(issue.mode()).isEqualTo(TokenMode.DIRECT);
         verify(vaultService).replaceOnReset(user.getId(), "bmV3");
     }
 
@@ -159,7 +160,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches("bad", "recovery-hash")).thenReturn(false);
 
         assertThatThrownBy(() -> authService.recoverReset(new RecoveryResetRequest(
-                "deniz@acme.io", "bad", "newAuth", "newRecovery", "bmV3")))
+                "deniz@acme.io", "bad", "newAuth", "newRecovery", "bmV3", null)))
                 .isInstanceOf(InvalidRecoveryCodeException.class);
     }
 
@@ -171,7 +172,7 @@ class AuthServiceTest {
                 .thenThrow(new DataIntegrityViolationException("uq_users_email"));
 
         assertThatThrownBy(() -> authService.register(
-                new RegisterRequest("race@acme.io", "a", "r", "dmF1bHQ=")))
+                new RegisterRequest("race@acme.io", "a", "r", "dmF1bHQ=", null)))
                 .isInstanceOf(EmailAlreadyRegisteredException.class);
     }
 

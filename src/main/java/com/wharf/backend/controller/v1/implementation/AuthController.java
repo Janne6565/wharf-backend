@@ -11,6 +11,7 @@ import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.core.TokenMode;
+import com.wharf.backend.model.core.TokenPair;
 import com.wharf.backend.security.RefreshCookieFactory;
 import com.wharf.backend.services.auth.AuthService;
 import jakarta.servlet.http.Cookie;
@@ -36,8 +37,9 @@ public class AuthController implements AuthApi {
     }
 
     @Override
-    public ResponseEntity<AuthResponse> register(RegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
+    public ResponseEntity<AuthResponse> register(RegisterRequest request, HttpServletResponse response) {
+        AuthService.TokenIssue issue = authService.register(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(toAuthResponse(issue, response));
     }
 
     @Override
@@ -74,8 +76,21 @@ public class AuthController implements AuthApi {
     }
 
     @Override
-    public ResponseEntity<AuthResponse> recoverReset(RecoveryResetRequest request) {
-        return ResponseEntity.ok(authService.recoverReset(request));
+    public ResponseEntity<AuthResponse> recoverReset(RecoveryResetRequest request, HttpServletResponse response) {
+        AuthService.TokenIssue issue = authService.recoverReset(request);
+        return ResponseEntity.ok(toAuthResponse(issue, response));
+    }
+
+    /**
+     * Builds the register / recovery-reset body: in COOKIE mode the refresh token is set as
+     * an httpOnly cookie and omitted from the pair; in DIRECT mode it is returned in the body.
+     */
+    private AuthResponse toAuthResponse(AuthService.TokenIssue issue, HttpServletResponse response) {
+        if (issue.mode() == TokenMode.COOKIE) {
+            setRefreshCookie(response, issue.refreshToken());
+            return new AuthResponse(issue.user(), new TokenPair(issue.accessToken(), null));
+        }
+        return new AuthResponse(issue.user(), new TokenPair(issue.accessToken(), issue.refreshToken()));
     }
 
     private void setRefreshCookie(HttpServletResponse response, String refreshToken) {

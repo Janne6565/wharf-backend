@@ -1,5 +1,6 @@
 package com.wharf.backend.model.action;
 
+import com.wharf.backend.model.core.TokenMode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -27,6 +28,12 @@ public record RecoveryResetRequest(
         @Schema(description = "Base64-encoded vault blob re-encrypted with the new key material")
         @NotBlank
         @Size(max = VaultPayloadConstraints.MAX_BASE64_LENGTH)
-        String vault
+        String vault,
+
+        @Schema(description = "Token delivery mode; defaults to COOKIE for browsers")
+        TokenMode tokenMode
 ) {
+    public TokenMode tokenModeOrDefault() {
+        return tokenMode == null ? TokenMode.COOKIE : tokenMode;
+    }
 }

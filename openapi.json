@@ -233,6 +233,7 @@
                     "Authentication"
                 ],
                 "summary": "Create a new zero-knowledge account",
+                "description": "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.",
                 "operationId": "register",
                 "requestBody": {
                     "content": {
@@ -356,7 +357,7 @@
                     "Authentication"
                 ],
                 "summary": "Re-encrypt the vault under a new password and rotate the recovery code",
-                "description": "Atomically replaces the credential hashes and vault, invalidates the old recovery code and revokes all existing sessions.",
+                "description": "Atomically replaces the credential hashes and vault, invalidates the old recovery code and revokes all existing sessions. In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.",
                 "operationId": "recoverReset",
                 "requestBody": {
                     "content": {
@@ -600,6 +601,14 @@
                         "minLength": 0,
                         "type": "string",
                         "description": "Base64-encoded ciphertext vault blob (WHARFV format)"
+                    },
+                    "tokenMode": {
+                        "type": "string",
+                        "description": "Token delivery mode; defaults to COOKIE for browsers",
+                        "enum": [
+                            "COOKIE",
+                            "DIRECT"
+                        ]
                     }
                 },
                 "description": "Create a new zero-knowledge account"
@@ -614,7 +623,7 @@
                         "$ref": "#/components/schemas/TokenPair"
                     }
                 },
-                "description": "The account plus a new token pair (register / recovery reset)"
+                "description": "The account plus a new token pair (register / recovery reset). In COOKIE mode the refresh token is set as an httpOnly cookie and omitted from the pair."
             },
             "TokenPair": {
                 "type": "object",
@@ -625,7 +634,8 @@
                     },
                     "refreshToken": {
                         "type": "string",
-                        "description": "Long-lived refresh token"
+                        "description": "Long-lived refresh token; present only in DIRECT mode (in COOKIE mode it is set as an httpOnly cookie and omitted here)",
+                        "nullable": true
                     }
                 },
                 "description": "A freshly issued identity + refresh token pair"
@@ -721,6 +731,14 @@
                         "minLength": 0,
                         "type": "string",
                         "description": "Base64-encoded vault blob re-encrypted with the new key material"
+                    },
+                    "tokenMode": {
+                        "type": "string",
+                        "description": "Token delivery mode; defaults to COOKIE for browsers",
+                        "enum": [
+                            "COOKIE",
+                            "DIRECT"
+                        ]
                     }
                 },
                 "description": "Re-encrypt the vault under a new password and rotate the recovery code"
