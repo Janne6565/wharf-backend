@@ -2,6 +2,7 @@ package com.wharf.backend.security;
 
 import com.wharf.backend.configuration.CorsProperties;
 import com.wharf.backend.security.ratelimit.RateLimitFilter;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -62,6 +63,26 @@ public class SecurityConfig {
                 .addFilterBefore(rateLimitFilter, JwtFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * Both filters are {@code @Component}s, so Spring Boot would otherwise auto-register
+     * them with the servlet container on <em>every</em> request in addition to their place
+     * in the security chain. Disable that duplicate registration; the chain is the only
+     * place they should run.
+     */
+    @Bean
+    public FilterRegistrationBean<JwtFilter> jwtFilterRegistration(JwtFilter filter) {
+        FilterRegistrationBean<JwtFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(RateLimitFilter filter) {
+        FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Bean

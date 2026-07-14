@@ -17,6 +17,13 @@ public record RateLimitProperties(
 
         boolean enabled,
 
+        /**
+         * Whether to trust the {@code X-Forwarded-For} header for the client IP. Keep
+         * {@code false} unless the app runs behind a trusted reverse proxy (Traefik) that
+         * overwrites the header — otherwise a client can spoof it to dodge the limit.
+         */
+        boolean trustForwardedHeader,
+
         @Min(1)
         int authCapacity,
 

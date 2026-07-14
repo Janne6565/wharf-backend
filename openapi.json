@@ -480,6 +480,8 @@
                 "type": "object",
                 "properties": {
                     "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
                         "type": "string",
                         "description": "Base64-encoded ciphertext vault blob"
                     },
@@ -594,6 +596,8 @@
                         "description": "base64 HKDF-derived recovery authentication key"
                     },
                     "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
                         "type": "string",
                         "description": "Base64-encoded ciphertext vault blob (WHARFV format)"
                     }
@@ -713,6 +717,8 @@
                         "description": "New base64 recovery authentication key for the freshly issued recovery code"
                     },
                     "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
                         "type": "string",
                         "description": "Base64-encoded vault blob re-encrypted with the new key material"
                     }

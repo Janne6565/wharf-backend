@@ -80,7 +80,10 @@ public class DeviceCodeService {
     @Transactional
     public SessionResponse exchange(DeviceCodeExchangeRequest request) {
         String normalized = normalize(request.code());
-        DeviceCodeEntity code = deviceCodeRepository.findByCodeHash(hash(normalized))
+        // Lock the row for the duration of the transaction so the used/expired check and
+        // the mark-as-used below are atomic: a concurrent exchange of the same code
+        // blocks here and then sees usedAt set (410) rather than also succeeding.
+        DeviceCodeEntity code = deviceCodeRepository.findAndLockByCodeHash(hash(normalized))
                 .orElseThrow(DeviceCodeNotFoundException::new);
 
         // Expired and already-used both return 410 so callers can't tell them apart.

@@ -70,7 +70,7 @@ class DeviceCodeServiceTest {
         DeviceCodeEntity code = DeviceCodeEntity.builder()
                 .id(UUID.randomUUID()).userId(userId).codeHash("hash")
                 .expiresAt(Instant.now().plusSeconds(300)).createdAt(Instant.now()).build();
-        when(deviceCodeRepository.findByCodeHash(any())).thenReturn(Optional.of(code));
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.of(code));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user()));
         when(jwtService.issueIdentityToken(any())).thenReturn("id-token");
         when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
@@ -84,7 +84,7 @@ class DeviceCodeServiceTest {
 
     @Test
     void exchange_unknownCode_throwsNotFound() {
-        when(deviceCodeRepository.findByCodeHash(any())).thenReturn(Optional.empty());
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> deviceCodeService.exchange(new DeviceCodeExchangeRequest("ABCD2345", null)))
                 .isInstanceOf(DeviceCodeNotFoundException.class);
@@ -95,7 +95,7 @@ class DeviceCodeServiceTest {
         DeviceCodeEntity code = DeviceCodeEntity.builder()
                 .id(UUID.randomUUID()).userId(userId).codeHash("hash")
                 .expiresAt(Instant.now().minusSeconds(1)).createdAt(Instant.now()).build();
-        when(deviceCodeRepository.findByCodeHash(any())).thenReturn(Optional.of(code));
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.of(code));
 
         assertThatThrownBy(() -> deviceCodeService.exchange(new DeviceCodeExchangeRequest("ABCD2345", null)))
                 .isInstanceOf(DeviceCodeUnusableException.class);
@@ -107,7 +107,7 @@ class DeviceCodeServiceTest {
                 .id(UUID.randomUUID()).userId(userId).codeHash("hash")
                 .expiresAt(Instant.now().plusSeconds(300)).usedAt(Instant.now().minusSeconds(5))
                 .createdAt(Instant.now()).build();
-        when(deviceCodeRepository.findByCodeHash(any())).thenReturn(Optional.of(code));
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.of(code));
 
         assertThatThrownBy(() -> deviceCodeService.exchange(new DeviceCodeExchangeRequest("ABCD2345", null)))
                 .isInstanceOf(DeviceCodeUnusableException.class);

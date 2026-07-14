@@ -3,6 +3,7 @@ package com.wharf.backend.model.action;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 @Schema(name = "RegisterRequest", description = "Create a new zero-knowledge account")
 public record RegisterRequest(
@@ -20,6 +21,7 @@ public record RegisterRequest(
 
         @Schema(description = "Base64-encoded ciphertext vault blob (WHARFV format)")
         @NotBlank
+        @Size(max = VaultPayloadConstraints.MAX_BASE64_LENGTH)
         String vault
 ) {
 }

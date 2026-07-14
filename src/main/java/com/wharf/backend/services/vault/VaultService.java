@@ -27,6 +27,9 @@ public class VaultService {
 
     private static final long INITIAL_VERSION = 1L;
 
+    /** Slack over the exact base64 length to tolerate padding characters. */
+    private static final int BASE64_PADDING_SLACK = 4;
+
     private final VaultRepository vaultRepository;
     private final VaultProperties vaultProperties;
 
@@ -92,6 +95,15 @@ public class VaultService {
     }
 
     private byte[] decodeAndValidate(String base64Blob) {
+        // Reject an oversized payload from its encoded length *before* decoding, so a huge
+        // blob never gets expanded into a byte[] in memory. base64 encodes n bytes as
+        // 4 * ceil(n / 3) characters, so anything longer than that (plus padding slack)
+        // cannot fit within the byte ceiling.
+        long maxBase64Length = (long) Math.ceil(vaultProperties.maxSizeBytes() / 3.0) * 4 + BASE64_PADDING_SLACK;
+        if (base64Blob.length() > maxBase64Length) {
+            throw new VaultTooLargeException(vaultProperties.maxSizeBytes());
+        }
+
         byte[] blob;
         try {
             blob = Base64.getDecoder().decode(base64Blob);

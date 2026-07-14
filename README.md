@@ -121,9 +121,9 @@ curl -s http://localhost:18080/v3/api-docs | python3 -m json.tool > openapi.json
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `JWT_SECRET_KEY` | insecure dev fallback in `application.properties` | **Must** be overridden outside local dev (≥ 32 bytes for HS256) |
+| `JWT_SECRET_KEY` | insecure dev fallback in `application.properties` | **Must** be overridden outside local dev (≥ 32 bytes for HS256); the app refuses to start on the `prod` profile if left at the committed dev default |
 | `SPRING_PROFILES_ACTIVE` | `dev` | `dev` (H2) or `prod` (PostgreSQL) |
-| `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/wharf` / `wharf` / `wharf` | prod profile only |
+| `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/wharf` / `wharf` / _(required)_ | prod profile only; `DB_PASSWORD` has no default and must be supplied |
 | `CORS_ALLOWED_ORIGINS` | `https://wharf.sh` (prod) / `http://localhost:5173` (dev) | comma-separated (`app.cors.allowed-origins`) |
 
 Other tunables live in `application.properties`: `jwt.identity-expiration`,

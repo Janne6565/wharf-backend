@@ -112,4 +112,15 @@ class VaultServiceTest {
         assertThatThrownBy(() -> vaultService.updateVault(userId, new UpdateVaultRequest(big, 0L)))
                 .isInstanceOf(VaultTooLargeException.class);
     }
+
+    @Test
+    void updateVault_oversizeBase64String_rejectedBeforeDecode() {
+        // Longer than the pre-decode length ceiling AND not valid base64: were it decoded
+        // first it would surface as InvalidVaultPayloadException, so a VaultTooLargeException
+        // proves the size check runs before any decode of the (unbounded) input.
+        String oversizedInvalid = "!".repeat(4000);
+
+        assertThatThrownBy(() -> vaultService.updateVault(userId, new UpdateVaultRequest(oversizedInvalid, 0L)))
+                .isInstanceOf(VaultTooLargeException.class);
+    }
 }

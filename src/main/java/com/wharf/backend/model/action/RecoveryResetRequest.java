@@ -3,6 +3,7 @@ package com.wharf.backend.model.action;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 @Schema(name = "RecoveryResetRequest",
         description = "Re-encrypt the vault under a new password and rotate the recovery code")
@@ -25,6 +26,7 @@ public record RecoveryResetRequest(
 
         @Schema(description = "Base64-encoded vault blob re-encrypted with the new key material")
         @NotBlank
+        @Size(max = VaultPayloadConstraints.MAX_BASE64_LENGTH)
         String vault
 ) {
 }

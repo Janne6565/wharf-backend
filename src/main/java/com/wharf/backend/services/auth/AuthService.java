@@ -23,6 +23,7 @@ import com.wharf.backend.services.UserMapper;
 import com.wharf.backend.services.vault.VaultService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,10 +41,20 @@ public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
+    /** Arbitrary value hashed once at startup purely to equalise timing (see {@link #dummyKeyHash}). */
+    private static final String DUMMY_KEY = "wharf-timing-equalizer";
+
     private final UserRepository userRepository;
     private final VaultService vaultService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+
+    /**
+     * A valid bcrypt hash, generated once, that unknown-email login/recovery attempts are
+     * matched against so an attacker cannot distinguish a missing account (no hash to
+     * compare) from a wrong key by response timing. The error is identical either way.
+     */
+    private final String dummyKeyHash;
 
     public AuthService(UserRepository userRepository,
                        VaultService vaultService,
@@ -53,6 +64,7 @@ public class AuthService {
         this.vaultService = vaultService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.dummyKeyHash = passwordEncoder.encode(DUMMY_KEY);
     }
 
     @Transactional
@@ -62,14 +74,22 @@ public class AuthService {
             throw new EmailAlreadyRegisteredException();
         }
 
-        UserEntity user = userRepository.save(UserEntity.builder()
-                .id(UUID.randomUUID())
-                .email(email)
-                .authKeyHash(passwordEncoder.encode(request.authKey()))
-                .recoveryKeyHash(passwordEncoder.encode(request.recoveryAuthKey()))
-                .tokenVersion(0)
-                .createdAt(Instant.now())
-                .build());
+        UserEntity user;
+        try {
+            // Flush eagerly so the unique-email constraint fires here, inside the try:
+            // two concurrent registrations of the same email would otherwise both pass the
+            // existsByEmail check and one would blow up as a 500 at commit time.
+            user = userRepository.saveAndFlush(UserEntity.builder()
+                    .id(UUID.randomUUID())
+                    .email(email)
+                    .authKeyHash(passwordEncoder.encode(request.authKey()))
+                    .recoveryKeyHash(passwordEncoder.encode(request.recoveryAuthKey()))
+                    .tokenVersion(0)
+                    .createdAt(Instant.now())
+                    .build());
+        } catch (DataIntegrityViolationException ex) {
+            throw new EmailAlreadyRegisteredException();
+        }
 
         vaultService.createInitialVault(user.getId(), request.vault());
 
@@ -79,9 +99,11 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public TokenIssue login(LoginRequest request) {
-        UserEntity user = userRepository.findByEmail(normalizeEmail(request.email()))
-                .orElseThrow(InvalidCredentialsException::new);
-        if (!passwordEncoder.matches(request.authKey(), user.getAuthKeyHash())) {
+        UserEntity user = userRepository.findByEmail(normalizeEmail(request.email())).orElse(null);
+        // Always run bcrypt (against a dummy hash for unknown emails) so an absent account
+        // and a wrong key take comparable time — no user enumeration via response timing.
+        String hash = user != null ? user.getAuthKeyHash() : dummyKeyHash;
+        if (!passwordEncoder.matches(request.authKey(), hash) || user == null) {
             throw new InvalidCredentialsException();
         }
         log.debug("Login for account {}", user.getId());
@@ -126,9 +148,11 @@ public class AuthService {
     }
 
     private UserEntity requireRecoveryMatch(String email, String recoveryAuthKey) {
-        UserEntity user = userRepository.findByEmail(normalizeEmail(email))
-                .orElseThrow(InvalidRecoveryCodeException::new);
-        if (!passwordEncoder.matches(recoveryAuthKey, user.getRecoveryKeyHash())) {
+        UserEntity user = userRepository.findByEmail(normalizeEmail(email)).orElse(null);
+        // Same timing-equalisation as login: bcrypt always runs, so an unknown email and a
+        // wrong recovery key are indistinguishable to a caller.
+        String hash = user != null ? user.getRecoveryKeyHash() : dummyKeyHash;
+        if (!passwordEncoder.matches(recoveryAuthKey, hash) || user == null) {
             throw new InvalidRecoveryCodeException();
         }
         return user;

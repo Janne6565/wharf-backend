@@ -3,6 +3,7 @@ package com.wharf.backend.services.auth;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
+import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RegisterRequest;
 import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.TokenMode;
@@ -14,6 +15,7 @@ import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.security.TokenType;
 import com.wharf.backend.services.vault.VaultService;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -66,7 +68,7 @@ class AuthServiceTest {
     void register_newEmail_persistsUserAndVaultAndIssuesTokens() {
         when(userRepository.existsByEmail("deniz@acme.io")).thenReturn(false);
         when(passwordEncoder.encode(any())).thenReturn("hashed");
-        when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(userRepository.saveAndFlush(any(UserEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(jwtService.issueIdentityToken(any())).thenReturn("id-token");
         when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
 
@@ -159,5 +161,37 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.recoverReset(new RecoveryResetRequest(
                 "deniz@acme.io", "bad", "newAuth", "newRecovery", "bmV3")))
                 .isInstanceOf(InvalidRecoveryCodeException.class);
+    }
+
+    @Test
+    void register_uniqueConstraintRace_translatesToConflict() {
+        when(userRepository.existsByEmail("race@acme.io")).thenReturn(false);
+        when(passwordEncoder.encode(any())).thenReturn("hashed");
+        when(userRepository.saveAndFlush(any(UserEntity.class)))
+                .thenThrow(new DataIntegrityViolationException("uq_users_email"));
+
+        assertThatThrownBy(() -> authService.register(
+                new RegisterRequest("race@acme.io", "a", "r", "dmF1bHQ=")))
+                .isInstanceOf(EmailAlreadyRegisteredException.class);
+    }
+
+    @Test
+    void login_unknownEmail_stillRunsBcryptToEqualiseTiming() {
+        when(userRepository.findByEmail("ghost@acme.io")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("ghost@acme.io", "x", null)))
+                .isInstanceOf(InvalidCredentialsException.class);
+        // The dummy-hash comparison must run for a missing account, so an attacker cannot
+        // enumerate accounts by timing the response.
+        verify(passwordEncoder).matches(eq("x"), any());
+    }
+
+    @Test
+    void recoverVerify_unknownEmail_stillRunsBcryptToEqualiseTiming() {
+        when(userRepository.findByEmail("ghost@acme.io")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.recoverVerify(new RecoveryVerifyRequest("ghost@acme.io", "x")))
+                .isInstanceOf(InvalidRecoveryCodeException.class);
+        verify(passwordEncoder).matches(eq("x"), any());
     }
 }
