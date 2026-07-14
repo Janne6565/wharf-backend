@@ -1,0 +1,774 @@
+{
+    "openapi": "3.0.1",
+    "info": {
+        "title": "Wharf Backend API",
+        "description": "Zero-knowledge sync backend for Wharf. The server only ever stores\nciphertext vault blobs and bcrypt hashes of client-derived credential\nkeys. It never sees passwords or plaintext vault contents.",
+        "version": "v1"
+    },
+    "servers": [
+        {
+            "url": "http://localhost:18080",
+            "description": "Generated server url"
+        }
+    ],
+    "tags": [
+        {
+            "name": "Users",
+            "description": "Account profile"
+        },
+        {
+            "name": "Vault",
+            "description": "Encrypted vault blob storage (server stores ciphertext only)"
+        },
+        {
+            "name": "Device Codes",
+            "description": "Pair the terminal client with an account"
+        },
+        {
+            "name": "Authentication",
+            "description": "Account registration, login, refresh and recovery"
+        }
+    ],
+    "paths": {
+        "/api/v1/vault": {
+            "get": {
+                "tags": [
+                    "Vault"
+                ],
+                "summary": "Fetch the stored vault blob and its version",
+                "operationId": "getVault",
+                "responses": {
+                    "404": {
+                        "description": "No vault for this account",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultResponse"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Vault returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "put": {
+                "tags": [
+                    "Vault"
+                ],
+                "summary": "Replace the vault blob with optimistic concurrency",
+                "operationId": "updateVault",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateVaultRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Vault updated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Version conflict",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Vault blob too large",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/device-codes": {
+            "post": {
+                "tags": [
+                    "Device Codes"
+                ],
+                "summary": "Issue a pairing code for the calling account",
+                "operationId": "issueDeviceCode",
+                "responses": {
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DeviceCodeResponse"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Code issued",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DeviceCodeResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/device-codes/exchange": {
+            "post": {
+                "tags": [
+                    "Device Codes"
+                ],
+                "summary": "Exchange a pairing code for a session (used by the TUI)",
+                "operationId": "exchangeDeviceCode",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/DeviceCodeExchangeRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Session issued",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "410": {
+                        "description": "Code expired or already used",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown code",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/register": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Create a new zero-knowledge account",
+                "operationId": "register",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "409": {
+                        "description": "Email already registered",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthResponse"
+                                }
+                            }
+                        }
+                    },
+                    "201": {
+                        "description": "Account created",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/refresh": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Exchange a refresh token for a new access token",
+                "description": "Reads the refresh token from the httpOnly cookie when present, otherwise from the body.",
+                "operationId": "refresh",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RefreshRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "New access token issued",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccessTokenResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, invalid or revoked refresh token",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccessTokenResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/recover/verify": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Verify a recovery code and return the vault for re-encryption",
+                "operationId": "recoverVerify",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RecoveryVerifyRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "401": {
+                        "description": "Recovery code does not match",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecoveryVerifyResponse"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Recovery code valid; vault returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecoveryVerifyResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/recover/reset": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Re-encrypt the vault under a new password and rotate the recovery code",
+                "description": "Atomically replaces the credential hashes and vault, invalidates the old recovery code and revokes all existing sessions.",
+                "operationId": "recoverReset",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RecoveryResetRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Reset complete; new tokens issued",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Recovery code does not match",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/login": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Authenticate with the derived auth key",
+                "description": "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.",
+                "operationId": "login",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LoginRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid credentials",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/me": {
+            "get": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Get the authenticated account's profile",
+                "operationId": "getCurrentUser",
+                "responses": {
+                    "200": {
+                        "description": "Profile returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "UpdateVaultRequest": {
+                "required": [
+                    "vault"
+                ],
+                "type": "object",
+                "properties": {
+                    "vault": {
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext vault blob"
+                    },
+                    "expectedVersion": {
+                        "type": "integer",
+                        "description": "The version the client last saw; the write is rejected (409) if it has moved on",
+                        "format": "int64"
+                    }
+                },
+                "description": "Replace the vault blob with optimistic concurrency"
+            },
+            "VaultUpdateResponse": {
+                "type": "object",
+                "properties": {
+                    "version": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "updatedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "description": "The new version after a successful vault write"
+            },
+            "DeviceCodeResponse": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Raw 8-character pairing code (display as XXXX-XXXX)",
+                        "example": "K7PQM2XR"
+                    },
+                    "expiresAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "description": "A freshly issued device-pairing code"
+            },
+            "DeviceCodeExchangeRequest": {
+                "required": [
+                    "code"
+                ],
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The pairing code; dashes and case are normalised",
+                        "example": "K7PQ-M2XR"
+                    },
+                    "deviceName": {
+                        "type": "string",
+                        "description": "Optional human-readable name for the device",
+                        "nullable": true
+                    }
+                },
+                "description": "Exchange a pairing code for a TUI session"
+            },
+            "SessionResponse": {
+                "type": "object",
+                "properties": {
+                    "user": {
+                        "$ref": "#/components/schemas/User"
+                    },
+                    "accessToken": {
+                        "type": "string"
+                    },
+                    "refreshToken": {
+                        "type": "string",
+                        "description": "Present only in DIRECT mode",
+                        "nullable": true
+                    }
+                },
+                "description": "The account plus tokens for a new session (login / device-code exchange). In COOKIE mode the refresh token is set as an httpOnly cookie and omitted here."
+            },
+            "User": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "description": "Public profile of an account"
+            },
+            "RegisterRequest": {
+                "required": [
+                    "authKey",
+                    "email",
+                    "recoveryAuthKey",
+                    "vault"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "authKey": {
+                        "type": "string",
+                        "description": "base64 HKDF-derived authentication key (never the password)"
+                    },
+                    "recoveryAuthKey": {
+                        "type": "string",
+                        "description": "base64 HKDF-derived recovery authentication key"
+                    },
+                    "vault": {
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext vault blob (WHARFV format)"
+                    }
+                },
+                "description": "Create a new zero-knowledge account"
+            },
+            "AuthResponse": {
+                "type": "object",
+                "properties": {
+                    "user": {
+                        "$ref": "#/components/schemas/User"
+                    },
+                    "tokens": {
+                        "$ref": "#/components/schemas/TokenPair"
+                    }
+                },
+                "description": "The account plus a new token pair (register / recovery reset)"
+            },
+            "TokenPair": {
+                "type": "object",
+                "properties": {
+                    "accessToken": {
+                        "type": "string",
+                        "description": "Short-lived identity (access) token; send as Bearer"
+                    },
+                    "refreshToken": {
+                        "type": "string",
+                        "description": "Long-lived refresh token"
+                    }
+                },
+                "description": "A freshly issued identity + refresh token pair"
+            },
+            "RefreshRequest": {
+                "type": "object",
+                "properties": {
+                    "refreshToken": {
+                        "type": "string",
+                        "description": "Refresh token; required in DIRECT mode, ignored if a cookie is present",
+                        "nullable": true
+                    },
+                    "tokenMode": {
+                        "type": "string",
+                        "description": "Token delivery mode; defaults to COOKIE",
+                        "nullable": true,
+                        "enum": [
+                            "COOKIE",
+                            "DIRECT"
+                        ]
+                    }
+                },
+                "description": "Optional body for refresh. In COOKIE mode the refresh token is read from the cookie instead."
+            },
+            "AccessTokenResponse": {
+                "type": "object",
+                "properties": {
+                    "accessToken": {
+                        "type": "string"
+                    },
+                    "refreshToken": {
+                        "type": "string",
+                        "description": "Rotated refresh token; present only in DIRECT mode",
+                        "nullable": true
+                    }
+                },
+                "description": "A refreshed access token (and rotated refresh in DIRECT mode)"
+            },
+            "RecoveryVerifyRequest": {
+                "required": [
+                    "email",
+                    "recoveryAuthKey"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "recoveryAuthKey": {
+                        "type": "string",
+                        "description": "base64 HKDF-derived recovery authentication key"
+                    }
+                },
+                "description": "Verify a recovery code and retrieve the vault for re-encryption"
+            },
+            "RecoveryVerifyResponse": {
+                "type": "object",
+                "properties": {
+                    "vault": {
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext vault blob"
+                    }
+                },
+                "description": "The current vault blob, so the browser can decrypt it via the recovery slot"
+            },
+            "RecoveryResetRequest": {
+                "required": [
+                    "email",
+                    "newAuthKey",
+                    "newRecoveryAuthKey",
+                    "recoveryAuthKey",
+                    "vault"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "recoveryAuthKey": {
+                        "type": "string",
+                        "description": "The current recovery authentication key (proves ownership)"
+                    },
+                    "newAuthKey": {
+                        "type": "string",
+                        "description": "New base64 authentication key derived from the new password"
+                    },
+                    "newRecoveryAuthKey": {
+                        "type": "string",
+                        "description": "New base64 recovery authentication key for the freshly issued recovery code"
+                    },
+                    "vault": {
+                        "type": "string",
+                        "description": "Base64-encoded vault blob re-encrypted with the new key material"
+                    }
+                },
+                "description": "Re-encrypt the vault under a new password and rotate the recovery code"
+            },
+            "LoginRequest": {
+                "required": [
+                    "authKey",
+                    "email"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "authKey": {
+                        "type": "string",
+                        "description": "base64 HKDF-derived authentication key"
+                    },
+                    "tokenMode": {
+                        "type": "string",
+                        "description": "Token delivery mode; defaults to COOKIE for browsers",
+                        "enum": [
+                            "COOKIE",
+                            "DIRECT"
+                        ]
+                    }
+                }
+            },
+            "VaultResponse": {
+                "type": "object",
+                "properties": {
+                    "vault": {
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext vault blob"
+                    },
+                    "version": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "updatedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "description": "The stored ciphertext vault and its version"
+            }
+        },
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "description": "Identity (access) token issued by /api/v1/auth.",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    }
+}
