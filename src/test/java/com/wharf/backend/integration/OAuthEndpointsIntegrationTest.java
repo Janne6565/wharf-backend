@@ -1,6 +1,5 @@
 package com.wharf.backend.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wharf.backend.configuration.Profiles;
 import com.wharf.backend.entity.UserEntity;
@@ -20,7 +19,6 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -28,8 +26,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * OAuth surface (with no providers configured) plus the profile flags and recovery-init
- * endpoint added for OAuth accounts, driven through the real filter chain and H2 schema.
+ * OAuth surface (with no providers configured) plus the profile flags and the atomic
+ * account-setup endpoint for OAuth accounts, driven through the real filter chain and
+ * Flyway-migrated H2 schema.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -72,7 +71,7 @@ class OAuthEndpointsIntegrationTest {
     }
 
     @Test
-    void registeredUser_profileFlagsAllTrue_andRecoveryAlreadySet() throws Exception {
+    void registeredUser_profileFlagsAllTrue_andSetupRejected() throws Exception {
         String email = "flags@acme.io";
         String registerBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
                 .put("email", email)
@@ -98,26 +97,20 @@ class OAuthEndpointsIntegrationTest {
                 .andExpect(jsonPath("$.hasRecovery").value(true))
                 .andExpect(jsonPath("$.hasVault").value(true));
 
-        // A registered account already has a recovery key -> first-time-only init is rejected.
-        String recoveryBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
-                .put("recoveryAuthKey", "another-recovery"));
-        mockMvc.perform(post("/api/v1/auth/recovery")
+        // A registered account already has a recovery key + vault -> first-time-only setup is rejected.
+        String setupBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("recoveryAuthKey", "another-recovery")
+                .put("vault", base64("another-vault")));
+        mockMvc.perform(post("/api/v1/auth/setup")
                         .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON).content(recoveryBody))
+                        .contentType(MediaType.APPLICATION_JSON).content(setupBody))
                 .andExpect(status().isConflict());
     }
 
     @Test
-    void oauthOnlyUser_profileFlagsFalse_loginRejected_andRecoveryInitFirstTimeOnly() throws Exception {
+    void oauthOnlyUser_setupIsAtomicFirstTimeOnly_andEnablesPasswordLogin() throws Exception {
         // Simulate an account created via OAuth: no password, no recovery, no vault.
-        UserEntity oauthUser = userRepository.saveAndFlush(UserEntity.builder()
-                .id(UUID.randomUUID())
-                .email("oauth-only@acme.io")
-                .authKeyHash(null)
-                .recoveryKeyHash(null)
-                .tokenVersion(0)
-                .createdAt(Instant.now())
-                .build());
+        UserEntity oauthUser = oauthOnlyUser("oauth-only@acme.io");
         String token = jwtService.issueIdentityToken(oauthUser);
 
         mockMvc.perform(get("/api/v1/users/me").header("Authorization", "Bearer " + token))
@@ -128,26 +121,87 @@ class OAuthEndpointsIntegrationTest {
 
         // Password login against an OAuth-only account behaves exactly like a wrong password.
         String loginBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
-                .put("email", "oauth-only@acme.io").put("authKey", "whatever").put("tokenMode", "DIRECT"));
+                .put("email", "oauth-only@acme.io").put("authKey", "master-auth-key").put("tokenMode", "DIRECT"));
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON).content(loginBody))
                 .andExpect(status().isUnauthorized());
 
-        // First recovery init succeeds (204); a second is rejected (409).
-        String recoveryBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
-                .put("recoveryAuthKey", "fresh-recovery"));
-        mockMvc.perform(post("/api/v1/auth/recovery")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON).content(recoveryBody))
-                .andExpect(status().isNoContent());
-        mockMvc.perform(post("/api/v1/auth/recovery")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON).content(recoveryBody))
-                .andExpect(status().isConflict());
-
-        // Unauthenticated recovery init is rejected by the filter chain.
-        mockMvc.perform(post("/api/v1/auth/recovery")
-                        .contentType(MediaType.APPLICATION_JSON).content(recoveryBody))
+        // Unauthenticated setup is rejected by the filter chain.
+        String setupBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("recoveryAuthKey", "fresh-recovery")
+                .put("vault", base64("initial-vault"))
+                .put("authKey", "master-auth-key"));
+        mockMvc.perform(post("/api/v1/auth/setup")
+                        .contentType(MediaType.APPLICATION_JSON).content(setupBody))
                 .andExpect(status().isUnauthorized());
+
+        // Atomicity: an invalid vault blob fails the whole setup, leaving recovery unset.
+        String badVaultBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("recoveryAuthKey", "fresh-recovery")
+                .put("vault", "!!!not-base64!!!"));
+        mockMvc.perform(post("/api/v1/auth/setup")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(badVaultBody))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/users/me").header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.hasRecovery").value(false))
+                .andExpect(jsonPath("$.hasVault").value(false));
+
+        // Successful setup (with optional authKey) commits recovery + vault + password together.
+        mockMvc.perform(post("/api/v1/auth/setup")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(setupBody))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/users/me").header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.hasPassword").value(true))
+                .andExpect(jsonPath("$.hasRecovery").value(true))
+                .andExpect(jsonPath("$.hasVault").value(true));
+
+        // The optional authKey enabled password login.
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON).content(loginBody))
+                .andExpect(status().isOk());
+
+        // Setup is strictly first-time: a second attempt is a conflict.
+        mockMvc.perform(post("/api/v1/auth/setup")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(setupBody))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void oauthOnlyUser_setupWithoutAuthKey_leavesPasswordLoginDisabled() throws Exception {
+        UserEntity oauthUser = oauthOnlyUser("oauth-no-password@acme.io");
+        String token = jwtService.issueIdentityToken(oauthUser);
+
+        String setupBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("recoveryAuthKey", "fresh-recovery")
+                .put("vault", base64("initial-vault")));
+        mockMvc.perform(post("/api/v1/auth/setup")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(setupBody))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/users/me").header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.hasPassword").value(false))
+                .andExpect(jsonPath("$.hasRecovery").value(true))
+                .andExpect(jsonPath("$.hasVault").value(true));
+
+        String loginBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("email", "oauth-no-password@acme.io").put("authKey", "anything").put("tokenMode", "DIRECT"));
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON).content(loginBody))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private UserEntity oauthOnlyUser(String email) {
+        return userRepository.saveAndFlush(UserEntity.builder()
+                .id(UUID.randomUUID())
+                .email(email)
+                .authKeyHash(null)
+                .recoveryKeyHash(null)
+                .tokenVersion(0)
+                .createdAt(Instant.now())
+                .build());
     }
 }

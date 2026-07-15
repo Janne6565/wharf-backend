@@ -231,6 +231,45 @@
                 }
             }
         },
+        "/api/v1/auth/setup": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "One-time onboarding for an account created via OAuth",
+                "description": "Atomically sets the recovery key, the initial encrypted vault and (optionally) a password auth key \u2014 all-or-nothing, so an account can never end up with a recovery key but no vault. Strictly first-time: rejected with 409 if a recovery key or vault already exists, or if authKey is supplied while a password is already set. Rotation stays exclusive to recover/reset.",
+                "operationId": "setupAccount",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AccountSetupRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "204": {
+                        "description": "Account set up"
+                    },
+                    "409": {
+                        "description": "Recovery key or vault already exists, or password already set"
+                    },
+                    "400": {
+                        "description": "Invalid vault payload"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/api/v1/auth/register": {
             "post": {
                 "tags": [
@@ -312,42 +351,6 @@
                         }
                     }
                 }
-            }
-        },
-        "/api/v1/auth/recovery": {
-            "post": {
-                "tags": [
-                    "Authentication"
-                ],
-                "summary": "Set the recovery key for an account that has none yet",
-                "description": "First-time recovery setup for accounts created via OAuth (which start without a recovery key). Rejected with 409 if a recovery key is already set \u2014 rotation stays exclusive to recover/reset.",
-                "operationId": "initRecovery",
-                "requestBody": {
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/RecoveryInitRequest"
-                            }
-                        }
-                    },
-                    "required": true
-                },
-                "responses": {
-                    "204": {
-                        "description": "Recovery key set"
-                    },
-                    "409": {
-                        "description": "A recovery key is already set"
-                    },
-                    "401": {
-                        "description": "Not authenticated"
-                    }
-                },
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ]
             }
         },
         "/api/v1/auth/recover/verify": {
@@ -709,6 +712,31 @@
                 },
                 "description": "Public profile of an account"
             },
+            "AccountSetupRequest": {
+                "required": [
+                    "recoveryAuthKey",
+                    "vault"
+                ],
+                "type": "object",
+                "properties": {
+                    "recoveryAuthKey": {
+                        "type": "string",
+                        "description": "base64 HKDF-derived recovery authentication key for the freshly generated recovery code"
+                    },
+                    "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Base64-encoded initial ciphertext vault blob (WHARFV format)"
+                    },
+                    "authKey": {
+                        "type": "string",
+                        "description": "Optional base64 HKDF-derived authentication key; when present the account also gains password login (rejected if a password is already set)",
+                        "nullable": true
+                    }
+                },
+                "description": "One-time onboarding for an account created via OAuth: atomically sets the recovery key, the initial encrypted vault, and (optionally) the password auth key derived from the same master password the vault was encrypted with"
+            },
             "RegisterRequest": {
                 "required": [
                     "authKey",
@@ -806,19 +834,6 @@
                     }
                 },
                 "description": "A refreshed access token (and rotated refresh in DIRECT mode)"
-            },
-            "RecoveryInitRequest": {
-                "required": [
-                    "recoveryAuthKey"
-                ],
-                "type": "object",
-                "properties": {
-                    "recoveryAuthKey": {
-                        "type": "string",
-                        "description": "base64 HKDF-derived recovery authentication key for the freshly generated recovery code"
-                    }
-                },
-                "description": "Set the recovery key for an account that does not have one yet (e.g. after OAuth signup)"
             },
             "RecoveryVerifyRequest": {
                 "required": [

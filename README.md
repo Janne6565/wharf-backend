@@ -63,7 +63,7 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 | Method & path | Body | Result |
 |---------------|------|--------|
 | `GET /users/me` | — | `{id, email, createdAt, hasPassword, hasRecovery, hasVault}` — the three booleans let the frontend route an OAuth account that has not set a master password / recovery / vault yet |
-| `POST /auth/recovery` | `{recoveryAuthKey}` | `204` — set the recovery key for an account that has none yet (OAuth signup). `409` if one is already set (rotation stays exclusive to recover/reset) |
+| `POST /auth/setup` | `{recoveryAuthKey, vault, authKey?}` | `204` — one-time onboarding for an OAuth-created account: **atomically** sets the recovery key, the initial vault and (optionally) a password auth key. `409` if a recovery key or vault already exists, or if `authKey` is supplied while a password is already set (rotation stays exclusive to recover/reset) |
 | `POST /device-codes` | — | `{code, expiresAt}` — 8-char code (no `0/O/1/I`), TTL 10 min; issuing invalidates the caller's previous unused codes |
 | `GET /vault` | — | `{vault, version, updatedAt}` |
 | `PUT /vault` | `{vault, expectedVersion}` | `{version, updatedAt}` · `409` on version conflict (optimistic concurrency) |
@@ -121,9 +121,12 @@ A provider is **enabled only when both its client id and secret are configured**
 ### After first OAuth login
 
 The frontend uses the `hasPassword` / `hasRecovery` / `hasVault` flags on `GET /users/me` to
-route a fresh OAuth account through setting its **master password** (which creates the vault
-client-side) and its **recovery code** (`POST /auth/recovery` — first-time only). Once a
-recovery key exists, the normal `recover/reset` flow can also add/replace the password.
+route a fresh OAuth account through onboarding: the client picks a **master password**,
+generates a **recovery code**, encrypts the initial vault locally and submits everything in
+one atomic call — `POST /auth/setup` `{recoveryAuthKey, vault, authKey?}` (first-time only;
+all-or-nothing, so an account can never end up with a recovery key but no vault). Including
+`authKey` also enables password login. Afterwards the normal `recover/reset` flow handles
+any rotation.
 
 ### Configuration
 

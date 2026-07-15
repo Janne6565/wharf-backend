@@ -1,16 +1,18 @@
 package com.wharf.backend.services.auth;
 
 import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.model.action.AccountSetupRequest;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RegisterRequest;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
+import com.wharf.backend.model.exception.AccountSetupConflictException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
-import com.wharf.backend.model.exception.RecoveryAlreadySetException;
+import com.wharf.backend.model.exception.InvalidVaultPayloadException;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.security.TokenType;
@@ -31,6 +33,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -211,24 +215,95 @@ class AuthServiceTest {
         verify(passwordEncoder).matches(eq("any"), any());
     }
 
-    @Test
-    void initRecovery_noExistingRecovery_setsHash() {
-        UserEntity oauthUser = user("oauth@acme.io");
-        oauthUser.setRecoveryKeyHash(null);
-        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
-        when(passwordEncoder.encode("new-recovery")).thenReturn("recovery-hash");
-
-        authService.initRecovery(oauthUser.getId(), "new-recovery");
-
-        assertThat(oauthUser.getRecoveryKeyHash()).isEqualTo("recovery-hash");
+    private UserEntity oauthOnlyUser() {
+        UserEntity user = user("oauth@acme.io");
+        user.setAuthKeyHash(null);
+        user.setRecoveryKeyHash(null);
+        return user;
     }
 
     @Test
-    void initRecovery_recoveryAlreadySet_throwsConflict() {
+    void setupAccount_firstTime_createsVaultAndSetsRecovery() {
+        UserEntity oauthUser = oauthOnlyUser();
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(vaultService.existsForUser(oauthUser.getId())).thenReturn(false);
+        when(passwordEncoder.encode("new-recovery")).thenReturn("recovery-hash");
+
+        authService.setupAccount(oauthUser.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", null));
+
+        verify(vaultService).createInitialVault(oauthUser.getId(), "dmF1bHQ=");
+        assertThat(oauthUser.getRecoveryKeyHash()).isEqualTo("recovery-hash");
+        // No authKey supplied -> the account stays OAuth-only for login.
+        assertThat(oauthUser.getAuthKeyHash()).isNull();
+    }
+
+    @Test
+    void setupAccount_withAuthKey_alsoEnablesPasswordLogin() {
+        UserEntity oauthUser = oauthOnlyUser();
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(vaultService.existsForUser(oauthUser.getId())).thenReturn(false);
+        when(passwordEncoder.encode("new-recovery")).thenReturn("recovery-hash");
+        when(passwordEncoder.encode("new-auth")).thenReturn("auth-hash");
+
+        authService.setupAccount(oauthUser.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", "new-auth"));
+
+        assertThat(oauthUser.getRecoveryKeyHash()).isEqualTo("recovery-hash");
+        assertThat(oauthUser.getAuthKeyHash()).isEqualTo("auth-hash");
+        verify(vaultService).createInitialVault(oauthUser.getId(), "dmF1bHQ=");
+    }
+
+    @Test
+    void setupAccount_recoveryAlreadySet_throwsConflict() {
         UserEntity user = user("deniz@acme.io"); // builder sets recoveryKeyHash "recovery-hash"
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.initRecovery(user.getId(), "new-recovery"))
-                .isInstanceOf(RecoveryAlreadySetException.class);
+        assertThatThrownBy(() -> authService.setupAccount(user.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", null)))
+                .isInstanceOf(AccountSetupConflictException.class);
+        verify(vaultService, never()).createInitialVault(any(), any());
+    }
+
+    @Test
+    void setupAccount_vaultAlreadyExists_throwsConflict() {
+        UserEntity oauthUser = oauthOnlyUser();
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(vaultService.existsForUser(oauthUser.getId())).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.setupAccount(oauthUser.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", null)))
+                .isInstanceOf(AccountSetupConflictException.class);
+        verify(vaultService, never()).createInitialVault(any(), any());
+    }
+
+    @Test
+    void setupAccount_authKeySuppliedButPasswordAlreadySet_throwsConflict() {
+        UserEntity user = oauthOnlyUser();
+        user.setAuthKeyHash("existing-auth-hash");
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(vaultService.existsForUser(user.getId())).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.setupAccount(user.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", "new-auth")))
+                .isInstanceOf(AccountSetupConflictException.class);
+        // No silent credential overwrite, and nothing else is written either.
+        assertThat(user.getAuthKeyHash()).isEqualTo("existing-auth-hash");
+        verify(vaultService, never()).createInitialVault(any(), any());
+    }
+
+    @Test
+    void setupAccount_invalidVault_failsBeforeRecoveryIsSet() {
+        UserEntity oauthUser = oauthOnlyUser();
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(vaultService.existsForUser(oauthUser.getId())).thenReturn(false);
+        doThrow(new InvalidVaultPayloadException("Vault blob is not valid base64"))
+                .when(vaultService).createInitialVault(oauthUser.getId(), "not-base64!");
+
+        assertThatThrownBy(() -> authService.setupAccount(oauthUser.getId(),
+                new AccountSetupRequest("new-recovery", "not-base64!", null)))
+                .isInstanceOf(InvalidVaultPayloadException.class);
+        // The vault is validated first, so the recovery key was never touched.
+        assertThat(oauthUser.getRecoveryKeyHash()).isNull();
     }
 }

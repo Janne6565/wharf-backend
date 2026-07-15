@@ -1,6 +1,7 @@
 package com.wharf.backend.services.auth;
 
 import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.model.action.AccountSetupRequest;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
@@ -9,11 +10,11 @@ import com.wharf.backend.model.action.RegisterRequest;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.core.UserDto;
+import com.wharf.backend.model.exception.AccountSetupConflictException;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
-import com.wharf.backend.model.exception.RecoveryAlreadySetException;
 import com.wharf.backend.model.exception.UserNotFoundException;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
@@ -160,19 +161,34 @@ public class AuthService {
     }
 
     /**
-     * Initialise the recovery key for an account that has none yet (e.g. a fresh OAuth
-     * account). First-time only: rotating an existing recovery key stays exclusive to the
-     * recover/reset flow, so this rejects an account that already has one.
+     * One-time onboarding for an account created via OAuth: atomically sets the recovery
+     * key, creates the initial vault and — optionally — a password auth key derived from
+     * the same master password the vault was just encrypted with. Strictly first-time:
+     * an existing recovery key or vault (or an existing password when {@code authKey} is
+     * supplied) is a conflict; rotation stays exclusive to the recover/reset flow.
      */
     @Transactional
-    public void initRecovery(UUID userId, String recoveryAuthKey) {
+    public void setupAccount(UUID userId, AccountSetupRequest request) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException(userId));
-        if (user.getRecoveryKeyHash() != null) {
-            throw new RecoveryAlreadySetException();
+        if (user.getRecoveryKeyHash() != null || vaultService.existsForUser(userId)) {
+            throw new AccountSetupConflictException("Account is already set up (recovery key or vault exists)");
         }
-        user.setRecoveryKeyHash(passwordEncoder.encode(recoveryAuthKey));
-        log.debug("Initialised recovery key for account {}", userId);
+        if (request.hasAuthKey() && user.getAuthKeyHash() != null) {
+            throw new AccountSetupConflictException("A password is already set for this account");
+        }
+
+        // The vault goes first: createInitialVault validates the blob (base64 + size cap)
+        // before any write, so a bad payload aborts here with nothing persisted. Everything
+        // below shares this transaction — a failure at any point rolls back recovery, vault
+        // and password together (no account can end up with a recovery key but no vault).
+        vaultService.createInitialVault(userId, request.vault());
+
+        user.setRecoveryKeyHash(passwordEncoder.encode(request.recoveryAuthKey()));
+        if (request.hasAuthKey()) {
+            user.setAuthKeyHash(passwordEncoder.encode(request.authKey()));
+        }
+        log.debug("Completed account setup for {} (password login: {})", userId, request.hasAuthKey());
     }
 
     private TokenIssue issue(UserEntity user, TokenMode mode) {

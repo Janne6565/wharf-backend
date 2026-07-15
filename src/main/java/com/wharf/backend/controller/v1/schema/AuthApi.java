@@ -2,8 +2,8 @@ package com.wharf.backend.controller.v1.schema;
 
 import com.wharf.backend.configuration.OpenApiConfig;
 import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.model.action.AccountSetupRequest;
 import com.wharf.backend.model.action.LoginRequest;
-import com.wharf.backend.model.action.RecoveryInitRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
@@ -74,15 +74,18 @@ public interface AuthApi {
     ResponseEntity<AuthResponse> recoverReset(@Valid @RequestBody RecoveryResetRequest request,
                                               HttpServletResponse response);
 
-    @PostMapping("/recovery")
-    @Operation(operationId = "initRecovery",
-            summary = "Set the recovery key for an account that has none yet",
-            description = "First-time recovery setup for accounts created via OAuth (which start without a recovery key). "
-                    + "Rejected with 409 if a recovery key is already set — rotation stays exclusive to recover/reset.",
+    @PostMapping("/setup")
+    @Operation(operationId = "setupAccount",
+            summary = "One-time onboarding for an account created via OAuth",
+            description = "Atomically sets the recovery key, the initial encrypted vault and (optionally) a password "
+                    + "auth key — all-or-nothing, so an account can never end up with a recovery key but no vault. "
+                    + "Strictly first-time: rejected with 409 if a recovery key or vault already exists, or if authKey "
+                    + "is supplied while a password is already set. Rotation stays exclusive to recover/reset.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
-    @ApiResponse(responseCode = "204", description = "Recovery key set")
+    @ApiResponse(responseCode = "204", description = "Account set up")
+    @ApiResponse(responseCode = "400", description = "Invalid vault payload")
     @ApiResponse(responseCode = "401", description = "Not authenticated")
-    @ApiResponse(responseCode = "409", description = "A recovery key is already set")
-    ResponseEntity<Void> initRecovery(@Valid @RequestBody RecoveryInitRequest request,
+    @ApiResponse(responseCode = "409", description = "Recovery key or vault already exists, or password already set")
+    ResponseEntity<Void> setupAccount(@Valid @RequestBody AccountSetupRequest request,
                                       @AuthenticationPrincipal UserEntity user);
 }

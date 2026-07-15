@@ -55,9 +55,11 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_GET_PATHS).permitAll()
-                        // Recovery initialisation is authenticated — it must be matched before the
-                        // blanket /api/v1/auth/** permitAll below (first match wins).
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/recovery").authenticated()
+                        // Account setup (OAuth onboarding) is authenticated — it must be matched
+                        // before the blanket /api/v1/auth/** permitAll below (first match wins).
+                        // The path still starts with /api/v1/auth, so the RateLimitFilter's
+                        // general AUTH bucket covers it.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/setup").authenticated()
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/device-codes/exchange").permitAll()
                         .anyRequest().authenticated())
