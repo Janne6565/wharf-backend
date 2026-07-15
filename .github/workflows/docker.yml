@@ -1,0 +1,78 @@
+name: Docker
+
+# Merge to main IS the prod deploy: build + push the image, then bump the pinned
+# tag in wharf-deployment/overlays/main. ArgoCD reconciles the commit onto the cluster.
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE: ghcr.io/janne6565/wharf-backend
+  DEPLOY_REPO: Janne6565/wharf-deployment
+  OVERLAY_PATH: overlays/main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute immutable image tag
+        id: meta
+        run: echo "tag=main-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Separate job so a missing/invalid DEPLOY_REPO_TOKEN fails ONLY the tag bump —
+  # the image is already built and pushed above.
+  bump-deployment:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out wharf-deployment
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DEPLOY_REPO }}
+          token: ${{ secrets.DEPLOY_REPO_TOKEN }}
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Pin backend image to the immutable tag
+        working-directory: ${{ env.OVERLAY_PATH }}
+        run: kustomize edit set image ${{ env.IMAGE }}=${{ env.IMAGE }}:${{ needs.build-and-push.outputs.tag }}
+
+      - name: Commit and push the bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ${{ env.OVERLAY_PATH }}/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "No image change to commit."
+          else
+            git commit -m "ci: update backend image to ${{ needs.build-and-push.outputs.tag }}"
+            git push
+          fi
