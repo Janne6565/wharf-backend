@@ -1,7 +1,9 @@
 package com.wharf.backend.controller.v1.implementation;
 
 import com.wharf.backend.controller.v1.schema.AuthApi;
+import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.LoginRequest;
+import com.wharf.backend.model.action.RecoveryInitRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
@@ -79,6 +81,12 @@ public class AuthController implements AuthApi {
     public ResponseEntity<AuthResponse> recoverReset(RecoveryResetRequest request, HttpServletResponse response) {
         AuthService.TokenIssue issue = authService.recoverReset(request);
         return ResponseEntity.ok(toAuthResponse(issue, response));
+    }
+
+    @Override
+    public ResponseEntity<Void> initRecovery(RecoveryInitRequest request, UserEntity user) {
+        authService.initRecovery(user.getId(), request.recoveryAuthKey());
+        return ResponseEntity.noContent().build();
     }
 
     /**

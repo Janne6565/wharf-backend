@@ -13,6 +13,10 @@
     ],
     "tags": [
         {
+            "name": "OAuth",
+            "description": "Google / GitHub social login (links an external identity, then issues the app's own JWTs)"
+        },
+        {
             "name": "Users",
             "description": "Account profile"
         },
@@ -310,6 +314,42 @@
                 }
             }
         },
+        "/api/v1/auth/recovery": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Set the recovery key for an account that has none yet",
+                "description": "First-time recovery setup for accounts created via OAuth (which start without a recovery key). Rejected with 409 if a recovery key is already set \u2014 rotation stays exclusive to recover/reset.",
+                "operationId": "initRecovery",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RecoveryInitRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "204": {
+                        "description": "Recovery key set"
+                    },
+                    "409": {
+                        "description": "A recovery key is already set"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/api/v1/auth/recover/verify": {
             "post": {
                 "tags": [
@@ -441,6 +481,7 @@
                     "Users"
                 ],
                 "summary": "Get the authenticated account's profile",
+                "description": "Includes hasPassword / hasRecovery / hasVault flags the frontend uses to route the account.",
                 "operationId": "getCurrentUser",
                 "responses": {
                     "200": {
@@ -448,7 +489,7 @@
                         "content": {
                             "*/*": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/User"
+                                    "$ref": "#/components/schemas/UserProfile"
                                 }
                             }
                         }
@@ -458,7 +499,7 @@
                         "content": {
                             "*/*": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/User"
+                                    "$ref": "#/components/schemas/UserProfile"
                                 }
                             }
                         }
@@ -469,6 +510,98 @@
                         "bearerAuth": []
                     }
                 ]
+            }
+        },
+        "/api/v1/auth/oauth/{provider}/callback": {
+            "get": {
+                "tags": [
+                    "OAuth"
+                ],
+                "summary": "Handle the OAuth provider callback",
+                "description": "Validates and consumes the state, exchanges the code server-to-server, requires a verified email, links/creates the local account, sets the httpOnly refresh cookie and 302-redirects to /oauth/complete. On any failure it redirects to /oauth/complete?error=<code> (provider_disabled | invalid_state | email_not_verified | provider_error | server_error).",
+                "operationId": "oauthCallback",
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "description": "Provider slug: google or github",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "code",
+                        "in": "query",
+                        "description": "Authorization code from the provider",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "description": "One-time state issued at /authorize",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to /oauth/complete on success (with refresh cookie) or /oauth/complete?error=<code> on failure"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/oauth/{provider}/authorize": {
+            "get": {
+                "tags": [
+                    "OAuth"
+                ],
+                "summary": "Begin the OAuth authorization-code flow",
+                "description": "302-redirects to the provider's consent page with a one-time state. A disabled/unknown provider redirects to /oauth/complete?error=provider_disabled.",
+                "operationId": "oauthAuthorize",
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "description": "Provider slug: google or github",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to the provider consent page (or to /oauth/complete on error)"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/oauth/providers": {
+            "get": {
+                "tags": [
+                    "OAuth"
+                ],
+                "summary": "List enabled OAuth providers",
+                "description": "Returns the slugs of providers configured with a client id + secret; empty when none are configured.",
+                "operationId": "listOAuthProviders",
+                "responses": {
+                    "200": {
+                        "description": "Enabled provider slugs",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OAuthProvidersResponse"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     },
@@ -674,6 +807,19 @@
                 },
                 "description": "A refreshed access token (and rotated refresh in DIRECT mode)"
             },
+            "RecoveryInitRequest": {
+                "required": [
+                    "recoveryAuthKey"
+                ],
+                "type": "object",
+                "properties": {
+                    "recoveryAuthKey": {
+                        "type": "string",
+                        "description": "base64 HKDF-derived recovery authentication key for the freshly generated recovery code"
+                    }
+                },
+                "description": "Set the recovery key for an account that does not have one yet (e.g. after OAuth signup)"
+            },
             "RecoveryVerifyRequest": {
                 "required": [
                     "email",
@@ -784,6 +930,49 @@
                     }
                 },
                 "description": "The stored ciphertext vault and its version"
+            },
+            "UserProfile": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "hasPassword": {
+                        "type": "boolean",
+                        "description": "Whether a master-password auth key is set (false for a fresh OAuth account)"
+                    },
+                    "hasRecovery": {
+                        "type": "boolean",
+                        "description": "Whether a recovery key is set"
+                    },
+                    "hasVault": {
+                        "type": "boolean",
+                        "description": "Whether an encrypted vault exists for this account"
+                    }
+                },
+                "description": "The authenticated account's profile plus routing capability flags"
+            },
+            "OAuthProvidersResponse": {
+                "type": "object",
+                "properties": {
+                    "providers": {
+                        "type": "array",
+                        "description": "Enabled provider slugs, e.g. [\"google\",\"github\"]; empty when none are configured",
+                        "items": {
+                            "type": "string",
+                            "description": "Enabled provider slugs, e.g. [\"google\",\"github\"]; empty when none are configured"
+                        }
+                    }
+                },
+                "description": "The OAuth providers that are currently enabled (configured with a client id + secret)"
             }
         },
         "securitySchemes": {

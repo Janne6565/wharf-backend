@@ -35,10 +35,18 @@ public class UserEntity {
     @Column(name = "email", nullable = false, unique = true)
     private String email;
 
-    @Column(name = "auth_key_hash", nullable = false)
+    /**
+     * bcrypt hash of the client-derived password auth key, or {@code null} for an
+     * OAuth-only account that has not set a master password yet.
+     */
+    @Column(name = "auth_key_hash")
     private String authKeyHash;
 
-    @Column(name = "recovery_key_hash", nullable = false)
+    /**
+     * bcrypt hash of the client-derived recovery auth key, or {@code null} until the
+     * account initialises recovery (registration sets it; OAuth accounts set it later).
+     */
+    @Column(name = "recovery_key_hash")
     private String recoveryKeyHash;
 
     @Column(name = "token_version", nullable = false)

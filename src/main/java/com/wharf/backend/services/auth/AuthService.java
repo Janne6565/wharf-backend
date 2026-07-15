@@ -13,6 +13,7 @@ import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
+import com.wharf.backend.model.exception.RecoveryAlreadySetException;
 import com.wharf.backend.model.exception.UserNotFoundException;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
@@ -67,7 +68,7 @@ public class AuthService {
 
     @Transactional
     public TokenIssue register(RegisterRequest request) {
-        String email = normalizeEmail(request.email());
+        String email = EmailNormalizer.normalize(request.email());
         if (userRepository.existsByEmail(email)) {
             throw new EmailAlreadyRegisteredException();
         }
@@ -97,11 +98,12 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public TokenIssue login(LoginRequest request) {
-        UserEntity user = userRepository.findByEmail(normalizeEmail(request.email())).orElse(null);
-        // Always run bcrypt (against a dummy hash for unknown emails) so an absent account
-        // and a wrong key take comparable time — no user enumeration via response timing.
-        String hash = user != null ? user.getAuthKeyHash() : dummyKeyHash;
-        if (!passwordEncoder.matches(request.authKey(), hash) || user == null) {
+        UserEntity user = userRepository.findByEmail(EmailNormalizer.normalize(request.email())).orElse(null);
+        // Always run bcrypt (against a dummy hash for unknown emails AND for OAuth-only
+        // accounts that never set a password) so an absent account, an unset password and a
+        // wrong key all take comparable time — no user enumeration via response timing.
+        String hash = user != null && user.getAuthKeyHash() != null ? user.getAuthKeyHash() : dummyKeyHash;
+        if (!passwordEncoder.matches(request.authKey(), hash) || user == null || user.getAuthKeyHash() == null) {
             throw new InvalidCredentialsException();
         }
         log.debug("Login for account {}", user.getId());
@@ -146,14 +148,31 @@ public class AuthService {
     }
 
     private UserEntity requireRecoveryMatch(String email, String recoveryAuthKey) {
-        UserEntity user = userRepository.findByEmail(normalizeEmail(email)).orElse(null);
-        // Same timing-equalisation as login: bcrypt always runs, so an unknown email and a
-        // wrong recovery key are indistinguishable to a caller.
-        String hash = user != null ? user.getRecoveryKeyHash() : dummyKeyHash;
-        if (!passwordEncoder.matches(recoveryAuthKey, hash) || user == null) {
+        UserEntity user = userRepository.findByEmail(EmailNormalizer.normalize(email)).orElse(null);
+        // Same timing-equalisation as login: bcrypt always runs (against the dummy hash for
+        // an unknown email or an account with no recovery key set yet), so all failures are
+        // indistinguishable to a caller.
+        String hash = user != null && user.getRecoveryKeyHash() != null ? user.getRecoveryKeyHash() : dummyKeyHash;
+        if (!passwordEncoder.matches(recoveryAuthKey, hash) || user == null || user.getRecoveryKeyHash() == null) {
             throw new InvalidRecoveryCodeException();
         }
         return user;
+    }
+
+    /**
+     * Initialise the recovery key for an account that has none yet (e.g. a fresh OAuth
+     * account). First-time only: rotating an existing recovery key stays exclusive to the
+     * recover/reset flow, so this rejects an account that already has one.
+     */
+    @Transactional
+    public void initRecovery(UUID userId, String recoveryAuthKey) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException(userId));
+        if (user.getRecoveryKeyHash() != null) {
+            throw new RecoveryAlreadySetException();
+        }
+        user.setRecoveryKeyHash(passwordEncoder.encode(recoveryAuthKey));
+        log.debug("Initialised recovery key for account {}", userId);
     }
 
     private TokenIssue issue(UserEntity user, TokenMode mode) {
@@ -161,10 +180,6 @@ public class AuthService {
                 jwtService.issueIdentityToken(user),
                 jwtService.issueRefreshToken(user),
                 mode);
-    }
-
-    private String normalizeEmail(String email) {
-        return email.trim().toLowerCase();
     }
 
     /** Freshly issued tokens plus the caller's chosen delivery mode. */

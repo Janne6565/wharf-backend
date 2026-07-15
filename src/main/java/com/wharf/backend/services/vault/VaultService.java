@@ -46,6 +46,11 @@ public class VaultService {
     }
 
     @Transactional(readOnly = true)
+    public boolean existsForUser(UUID userId) {
+        return vaultRepository.existsById(userId);
+    }
+
+    @Transactional(readOnly = true)
     public String getBlobBase64(UUID userId) {
         VaultEntity vault = vaultRepository.findByUserId(userId)
                 .orElseThrow(VaultNotFoundException::new);

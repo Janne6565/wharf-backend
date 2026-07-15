@@ -2,7 +2,7 @@ package com.wharf.backend.controller.v1.schema;
 
 import com.wharf.backend.configuration.OpenApiConfig;
 import com.wharf.backend.entity.UserEntity;
-import com.wharf.backend.model.core.UserDto;
+import com.wharf.backend.model.core.UserProfileResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -19,8 +19,9 @@ public interface UserApi {
     @GetMapping("/me")
     @Operation(operationId = "getCurrentUser",
             summary = "Get the authenticated account's profile",
+            description = "Includes hasPassword / hasRecovery / hasVault flags the frontend uses to route the account.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
     @ApiResponse(responseCode = "200", description = "Profile returned")
     @ApiResponse(responseCode = "401", description = "Not authenticated")
-    ResponseEntity<UserDto> getCurrentUser(@AuthenticationPrincipal UserEntity user);
+    ResponseEntity<UserProfileResponse> getCurrentUser(@AuthenticationPrincipal UserEntity user);
 }

@@ -10,6 +10,7 @@ import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
+import com.wharf.backend.model.exception.RecoveryAlreadySetException;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.security.TokenType;
@@ -194,5 +195,40 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.recoverVerify(new RecoveryVerifyRequest("ghost@acme.io", "x")))
                 .isInstanceOf(InvalidRecoveryCodeException.class);
         verify(passwordEncoder).matches(eq("x"), any());
+    }
+
+    @Test
+    void login_oauthOnlyAccountWithNoPassword_behavesLikeWrongPasswordAndStillRunsBcrypt() {
+        // An OAuth-only account has a null authKeyHash. A password login must be rejected
+        // identically to a wrong password, INCLUDING running bcrypt against the dummy hash
+        // so timing cannot reveal that the account exists but has no password.
+        UserEntity oauthUser = user("oauth@acme.io");
+        oauthUser.setAuthKeyHash(null);
+        when(userRepository.findByEmail("oauth@acme.io")).thenReturn(Optional.of(oauthUser));
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("oauth@acme.io", "any", null)))
+                .isInstanceOf(InvalidCredentialsException.class);
+        verify(passwordEncoder).matches(eq("any"), any());
+    }
+
+    @Test
+    void initRecovery_noExistingRecovery_setsHash() {
+        UserEntity oauthUser = user("oauth@acme.io");
+        oauthUser.setRecoveryKeyHash(null);
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(passwordEncoder.encode("new-recovery")).thenReturn("recovery-hash");
+
+        authService.initRecovery(oauthUser.getId(), "new-recovery");
+
+        assertThat(oauthUser.getRecoveryKeyHash()).isEqualTo("recovery-hash");
+    }
+
+    @Test
+    void initRecovery_recoveryAlreadySet_throwsConflict() {
+        UserEntity user = user("deniz@acme.io"); // builder sets recoveryKeyHash "recovery-hash"
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.initRecovery(user.getId(), "new-recovery"))
+                .isInstanceOf(RecoveryAlreadySetException.class);
     }
 }

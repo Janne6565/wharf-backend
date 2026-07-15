@@ -1,6 +1,9 @@
 package com.wharf.backend.controller.v1.schema;
 
+import com.wharf.backend.configuration.OpenApiConfig;
+import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.LoginRequest;
+import com.wharf.backend.model.action.RecoveryInitRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
@@ -11,11 +14,13 @@ import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -68,4 +73,16 @@ public interface AuthApi {
     @ApiResponse(responseCode = "401", description = "Recovery code does not match")
     ResponseEntity<AuthResponse> recoverReset(@Valid @RequestBody RecoveryResetRequest request,
                                               HttpServletResponse response);
+
+    @PostMapping("/recovery")
+    @Operation(operationId = "initRecovery",
+            summary = "Set the recovery key for an account that has none yet",
+            description = "First-time recovery setup for accounts created via OAuth (which start without a recovery key). "
+                    + "Rejected with 409 if a recovery key is already set — rotation stays exclusive to recover/reset.",
+            security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
+    @ApiResponse(responseCode = "204", description = "Recovery key set")
+    @ApiResponse(responseCode = "401", description = "Not authenticated")
+    @ApiResponse(responseCode = "409", description = "A recovery key is already set")
+    ResponseEntity<Void> initRecovery(@Valid @RequestBody RecoveryInitRequest request,
+                                      @AuthenticationPrincipal UserEntity user);
 }
