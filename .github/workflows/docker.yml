@@ -62,18 +62,26 @@ jobs:
       - name: Install kustomize
         uses: imranismail/setup-kustomize@v2
 
-      - name: Pin backend image to the immutable tag
-        working-directory: ${{ env.OVERLAY_PATH }}
-        run: kustomize edit set image ${{ env.IMAGE }}=${{ env.IMAGE }}:${{ needs.build-and-push.outputs.tag }}
-
-      - name: Commit and push the bump
+      # Backend and web bumps can land concurrently on the same repo — on a rejected
+      # push, reset to the remote head and re-apply the pin instead of failing.
+      - name: Pin backend image to the immutable tag and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ${{ env.OVERLAY_PATH }}/kustomization.yaml
-          if git diff --cached --quiet; then
-            echo "No image change to commit."
-          else
+          for attempt in 1 2 3 4 5; do
+            (cd ${{ env.OVERLAY_PATH }} && kustomize edit set image ${{ env.IMAGE }}=${{ env.IMAGE }}:${{ needs.build-and-push.outputs.tag }})
+            git add ${{ env.OVERLAY_PATH }}/kustomization.yaml
+            if git diff --cached --quiet; then
+              echo "No image change to commit."
+              exit 0
+            fi
             git commit -m "ci: update backend image to ${{ needs.build-and-push.outputs.tag }}"
-            git push
-          fi
+            if git push; then
+              exit 0
+            fi
+            echo "Push rejected (concurrent bump) — retrying on latest main ($attempt/5)."
+            git fetch origin main
+            git reset --hard origin/main
+          done
+          echo "Failed to push the image bump after 5 attempts." >&2
+          exit 1
