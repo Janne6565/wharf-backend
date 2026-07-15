@@ -64,6 +64,7 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 |---------------|------|--------|
 | `GET /users/me` | — | `{id, email, createdAt, hasPassword, hasRecovery, hasVault}` — the three booleans let the frontend route an OAuth account that has not set a master password / recovery / vault yet |
 | `POST /auth/setup` | `{recoveryAuthKey, vault, authKey?}` | `204` — one-time onboarding for an OAuth-created account: **atomically** sets the recovery key, the initial vault and (optionally) a password auth key. `409` if a recovery key or vault already exists, or if `authKey` is supplied while a password is already set (rotation stays exclusive to recover/reset) |
+| `POST /auth/password` | `{currentAuthKey, newAuthKey, vault}` | `{version, updatedAt}` — authenticated master-password change: verifies `currentAuthKey`, replaces the auth-key hash with one derived from the new password and stores the re-encrypted `vault` (bumping its version). The recovery code is untouched, and existing sessions stay valid (device pairings are independent of the password). `401` if `currentAuthKey` is wrong; `409` if no password is set yet (use `/auth/setup`) |
 | `POST /device-codes` | — | `{code, expiresAt}` — 8-char code (no `0/O/1/I`), TTL 10 min; issuing invalidates the caller's previous unused codes |
 | `GET /vault` | — | `{vault, version, updatedAt}` |
 | `PUT /vault` | `{vault, expectedVersion}` | `{version, updatedAt}` · `409` on version conflict (optimistic concurrency) |

@@ -2,6 +2,7 @@ package com.wharf.backend.services.auth;
 
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.AccountSetupRequest;
+import com.wharf.backend.model.action.ChangePasswordRequest;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
@@ -10,11 +11,13 @@ import com.wharf.backend.model.action.RegisterRequest;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.core.UserDto;
+import com.wharf.backend.model.core.VaultUpdateResponse;
 import com.wharf.backend.model.exception.AccountSetupConflictException;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
+import com.wharf.backend.model.exception.PasswordNotSetException;
 import com.wharf.backend.model.exception.UserNotFoundException;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
@@ -189,6 +192,31 @@ public class AuthService {
             user.setAuthKeyHash(passwordEncoder.encode(request.authKey()));
         }
         log.debug("Completed account setup for {} (password login: {})", userId, request.hasAuthKey());
+    }
+
+    /**
+     * Authenticated master-password change: verify the current auth key, swap in a hash of
+     * the new one and store the vault re-encrypted under the new password. Sessions are left
+     * intact — a device pairing is independent of the password, and the recovery code is
+     * untouched (its slot in the re-encrypted blob still opens). Requires a password to
+     * already exist; OAuth-first accounts set one via {@link #setupAccount}.
+     */
+    @Transactional
+    public VaultUpdateResponse changePassword(UUID userId, ChangePasswordRequest request) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException(userId));
+        if (user.getAuthKeyHash() == null) {
+            throw new PasswordNotSetException();
+        }
+        if (!passwordEncoder.matches(request.currentAuthKey(), user.getAuthKeyHash())) {
+            throw new InvalidCredentialsException();
+        }
+
+        user.setAuthKeyHash(passwordEncoder.encode(request.newAuthKey()));
+        VaultUpdateResponse updated = vaultService.replaceOnPasswordChange(userId, request.vault());
+
+        log.debug("Master password changed for account {} (vault now v{})", userId, updated.version());
+        return updated;
     }
 
     private TokenIssue issue(UserEntity user, TokenMode mode) {

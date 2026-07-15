@@ -60,6 +60,9 @@ public class SecurityConfig {
                         // The path still starts with /api/v1/auth, so the RateLimitFilter's
                         // general AUTH bucket covers it.
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/setup").authenticated()
+                        // Master-password change is authenticated too — same first-match-wins
+                        // ordering ahead of the blanket /api/v1/auth/** permitAll.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/password").authenticated()
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/device-codes/exchange").permitAll()
                         .anyRequest().authenticated())

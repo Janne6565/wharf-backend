@@ -3,6 +3,7 @@ package com.wharf.backend.controller.v1.schema;
 import com.wharf.backend.configuration.OpenApiConfig;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.AccountSetupRequest;
+import com.wharf.backend.model.action.ChangePasswordRequest;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
@@ -12,6 +13,7 @@ import com.wharf.backend.model.core.AccessTokenResponse;
 import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.SessionResponse;
+import com.wharf.backend.model.core.VaultUpdateResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -88,4 +90,20 @@ public interface AuthApi {
     @ApiResponse(responseCode = "409", description = "Recovery key or vault already exists, or password already set")
     ResponseEntity<Void> setupAccount(@Valid @RequestBody AccountSetupRequest request,
                                       @AuthenticationPrincipal UserEntity user);
+
+    @PostMapping("/password")
+    @Operation(operationId = "changePassword",
+            summary = "Rotate the master-password auth key and re-encrypt the vault",
+            description = "Authenticated master-password change: verifies the current auth key, replaces the stored "
+                    + "auth-key hash with one derived from the new password and stores the vault blob re-encrypted "
+                    + "under it (bumping the vault version). The recovery code is left untouched, and existing "
+                    + "sessions stay valid (device pairings are independent of the password). Requires a password to "
+                    + "already be set — OAuth-first accounts set one via /auth/setup.",
+            security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
+    @ApiResponse(responseCode = "200", description = "Password changed; new vault version returned")
+    @ApiResponse(responseCode = "400", description = "Invalid vault payload")
+    @ApiResponse(responseCode = "401", description = "Not authenticated, or the current auth key does not match")
+    @ApiResponse(responseCode = "409", description = "No password is set for this account")
+    ResponseEntity<VaultUpdateResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request,
+                                                       @AuthenticationPrincipal UserEntity user);
 }

@@ -436,6 +436,73 @@
                 }
             }
         },
+        "/api/v1/auth/password": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Rotate the master-password auth key and re-encrypt the vault",
+                "description": "Authenticated master-password change: verifies the current auth key, replaces the stored auth-key hash with one derived from the new password and stores the vault blob re-encrypted under it (bumping the vault version). The recovery code is left untouched, and existing sessions stay valid (device pairings are independent of the password). Requires a password to already be set \u2014 OAuth-first accounts set one via /auth/setup.",
+                "operationId": "changePassword",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ChangePasswordRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Password changed; new vault version returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "No password is set for this account",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid vault payload",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated, or the current auth key does not match",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/api/v1/auth/login": {
             "post": {
                 "tags": [
@@ -903,6 +970,31 @@
                     }
                 },
                 "description": "Re-encrypt the vault under a new password and rotate the recovery code"
+            },
+            "ChangePasswordRequest": {
+                "required": [
+                    "currentAuthKey",
+                    "newAuthKey",
+                    "vault"
+                ],
+                "type": "object",
+                "properties": {
+                    "currentAuthKey": {
+                        "type": "string",
+                        "description": "The current base64 authentication key (proves the caller knows the current password)"
+                    },
+                    "newAuthKey": {
+                        "type": "string",
+                        "description": "New base64 authentication key derived from the new password"
+                    },
+                    "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Base64-encoded vault blob re-encrypted under the new password (recovery slot unchanged)"
+                    }
+                },
+                "description": "Rotate the master-password auth key and re-encrypt the vault under the new password. The recovery code is unchanged, so its slot in the vault blob stays valid."
             },
             "LoginRequest": {
                 "required": [

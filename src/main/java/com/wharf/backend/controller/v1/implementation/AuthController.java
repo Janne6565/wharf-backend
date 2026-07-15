@@ -3,6 +3,7 @@ package com.wharf.backend.controller.v1.implementation;
 import com.wharf.backend.controller.v1.schema.AuthApi;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.AccountSetupRequest;
+import com.wharf.backend.model.action.ChangePasswordRequest;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
@@ -14,6 +15,7 @@ import com.wharf.backend.model.core.RecoveryVerifyResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.core.TokenPair;
+import com.wharf.backend.model.core.VaultUpdateResponse;
 import com.wharf.backend.security.RefreshCookieFactory;
 import com.wharf.backend.services.auth.AuthService;
 import jakarta.servlet.http.Cookie;
@@ -87,6 +89,11 @@ public class AuthController implements AuthApi {
     public ResponseEntity<Void> setupAccount(AccountSetupRequest request, UserEntity user) {
         authService.setupAccount(user.getId(), request);
         return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<VaultUpdateResponse> changePassword(ChangePasswordRequest request, UserEntity user) {
+        return ResponseEntity.ok(authService.changePassword(user.getId(), request));
     }
 
     /**

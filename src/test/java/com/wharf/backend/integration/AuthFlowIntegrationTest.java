@@ -191,4 +191,72 @@ class AuthFlowIntegrationTest {
                 .andReturn();
         assertThat(json(vaultV3).path("version").asLong()).isEqualTo(3L);
     }
+
+    @Test
+    void changePasswordRotatesAuthKeyAndVaultWhileKeepingSession() throws Exception {
+        String email = "changepw@acme.io";
+        String oldKey = "old-auth-key-base64==";
+        String newKey = "new-auth-key-base64==";
+
+        // Register (DIRECT so we hold the tokens) and log in.
+        String registerBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("email", email)
+                .put("authKey", oldKey)
+                .put("recoveryAuthKey", "recovery-key-base64==")
+                .put("vault", base64("vault-v1"))
+                .put("tokenMode", "DIRECT"));
+        MvcResult registered = mockMvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON).content(registerBody))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String accessToken = json(registered).path("tokens").path("accessToken").asText();
+        assertThat(accessToken).isNotBlank();
+
+        // Unauthenticated change-password is rejected.
+        String changeBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("currentAuthKey", oldKey)
+                .put("newAuthKey", newKey)
+                .put("vault", base64("vault-v2")));
+        mockMvc.perform(post("/api/v1/auth/password")
+                        .contentType(MediaType.APPLICATION_JSON).content(changeBody))
+                .andExpect(status().isUnauthorized());
+
+        // Wrong current key -> 401, nothing changes.
+        String wrongCurrent = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("currentAuthKey", "not-the-current-key")
+                .put("newAuthKey", newKey)
+                .put("vault", base64("vault-v2")));
+        mockMvc.perform(post("/api/v1/auth/password")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(wrongCurrent))
+                .andExpect(status().isUnauthorized());
+
+        // Correct current key -> 200, vault bumped 1 -> 2.
+        MvcResult changed = mockMvc.perform(post("/api/v1/auth/password")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(changeBody))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(json(changed).path("version").asLong()).isEqualTo(2L);
+
+        // The old password no longer logs in; the new one does.
+        String oldLogin = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("email", email).put("authKey", oldKey).put("tokenMode", "DIRECT"));
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON).content(oldLogin))
+                .andExpect(status().isUnauthorized());
+
+        String newLogin = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("email", email).put("authKey", newKey).put("tokenMode", "DIRECT"));
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON).content(newLogin))
+                .andExpect(status().isOk());
+
+        // A password change does NOT revoke the current session (device pairings stand).
+        MvcResult vault = mockMvc.perform(get("/api/v1/vault")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(json(vault).path("version").asLong()).isEqualTo(2L);
+    }
 }

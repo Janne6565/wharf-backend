@@ -2,6 +2,7 @@ package com.wharf.backend.services.auth;
 
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.AccountSetupRequest;
+import com.wharf.backend.model.action.ChangePasswordRequest;
 import com.wharf.backend.model.action.LoginRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
@@ -13,6 +14,8 @@ import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
 import com.wharf.backend.model.exception.InvalidVaultPayloadException;
+import com.wharf.backend.model.exception.PasswordNotSetException;
+import com.wharf.backend.model.core.VaultUpdateResponse;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.security.TokenType;
@@ -290,6 +293,50 @@ class AuthServiceTest {
         // No silent credential overwrite, and nothing else is written either.
         assertThat(user.getAuthKeyHash()).isEqualTo("existing-auth-hash");
         verify(vaultService, never()).createInitialVault(any(), any());
+    }
+
+    @Test
+    void changePassword_validCurrentKey_rotatesHashAndReplacesVault() {
+        UserEntity user = user("deniz@acme.io"); // authKeyHash "auth-hash"
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("cur-auth", "auth-hash")).thenReturn(true);
+        when(passwordEncoder.encode("new-auth")).thenReturn("new-hash");
+        Instant when = Instant.now();
+        when(vaultService.replaceOnPasswordChange(user.getId(), "bmV3"))
+                .thenReturn(new VaultUpdateResponse(2L, when));
+
+        VaultUpdateResponse res = authService.changePassword(user.getId(),
+                new ChangePasswordRequest("cur-auth", "new-auth", "bmV3"));
+
+        assertThat(res.version()).isEqualTo(2L);
+        assertThat(user.getAuthKeyHash()).isEqualTo("new-hash");
+        // A password change must NOT revoke existing device sessions.
+        assertThat(user.getTokenVersion()).isEqualTo(0);
+        verify(vaultService).replaceOnPasswordChange(user.getId(), "bmV3");
+    }
+
+    @Test
+    void changePassword_wrongCurrentKey_throwsInvalidCredentialsAndTouchesNothing() {
+        UserEntity user = user("deniz@acme.io");
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong", "auth-hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.changePassword(user.getId(),
+                new ChangePasswordRequest("wrong", "new-auth", "bmV3")))
+                .isInstanceOf(InvalidCredentialsException.class);
+        assertThat(user.getAuthKeyHash()).isEqualTo("auth-hash");
+        verify(vaultService, never()).replaceOnPasswordChange(any(), any());
+    }
+
+    @Test
+    void changePassword_noPasswordSet_throwsConflict() {
+        UserEntity user = oauthOnlyUser(); // authKeyHash null
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.changePassword(user.getId(),
+                new ChangePasswordRequest("cur", "new-auth", "bmV3")))
+                .isInstanceOf(PasswordNotSetException.class);
+        verify(vaultService, never()).replaceOnPasswordChange(any(), any());
     }
 
     @Test

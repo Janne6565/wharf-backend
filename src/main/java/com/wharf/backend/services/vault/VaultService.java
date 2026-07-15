@@ -92,11 +92,29 @@ public class VaultService {
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void replaceOnReset(UUID userId, String base64Blob) {
+        replaceBlob(userId, base64Blob);
+    }
+
+    /**
+     * Replace the vault blob during a master-password change (bumps the version and returns
+     * it so the caller can report the new version). The blob is the same vault re-encrypted
+     * under the new password — only the password unlock slot differs. Must run inside the
+     * caller's transaction.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public VaultUpdateResponse replaceOnPasswordChange(UUID userId, String base64Blob) {
+        VaultEntity vault = replaceBlob(userId, base64Blob);
+        return new VaultUpdateResponse(vault.getVersion(), vault.getUpdatedAt());
+    }
+
+    /** Locks the vault row, overwrites the blob and bumps the version + timestamp. */
+    private VaultEntity replaceBlob(UUID userId, String base64Blob) {
         VaultEntity vault = vaultRepository.findAndLockByUserId(userId)
                 .orElseThrow(VaultNotFoundException::new);
         vault.setBlob(decodeAndValidate(base64Blob));
         vault.setVersion(vault.getVersion() + 1);
         vault.setUpdatedAt(Instant.now());
+        return vault;
     }
 
     private byte[] decodeAndValidate(String base64Blob) {
