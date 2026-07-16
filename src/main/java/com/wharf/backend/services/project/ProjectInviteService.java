@@ -52,6 +52,7 @@ public class ProjectInviteService {
     private final UserRepository userRepository;
     private final ProjectAccessService access;
     private final ProjectProperties projectProperties;
+    private final InviteNotificationService inviteNotifications;
 
     public ProjectInviteService(ProjectInviteRepository inviteRepository,
                                 ProjectMemberRepository memberRepository,
@@ -59,7 +60,8 @@ public class ProjectInviteService {
                                 ProjectVaultRepository projectVaultRepository,
                                 UserRepository userRepository,
                                 ProjectAccessService access,
-                                ProjectProperties projectProperties) {
+                                ProjectProperties projectProperties,
+                                InviteNotificationService inviteNotifications) {
         this.inviteRepository = inviteRepository;
         this.memberRepository = memberRepository;
         this.projectRepository = projectRepository;
@@ -67,6 +69,7 @@ public class ProjectInviteService {
         this.userRepository = userRepository;
         this.access = access;
         this.projectProperties = projectProperties;
+        this.inviteNotifications = inviteNotifications;
     }
 
     @Transactional
@@ -106,7 +109,24 @@ public class ProjectInviteService {
         }
 
         log.debug("Invited {} to project {}", email, projectId);
+        notifyInvited(email, actingUserId, projectId, expiresAt);
         return ProjectMapper.inviteDto(invite);
+    }
+
+    /**
+     * Fire the invite notification email best-effort: it runs asynchronously and a failure
+     * to look up the inviter/project or to enqueue delivery must never affect the invite.
+     */
+    private void notifyInvited(String recipient, UUID inviterId, UUID projectId, Instant expiresAt) {
+        try {
+            String inviterEmail = userRepository.findById(inviterId)
+                    .map(UserEntity::getEmail).orElse(null);
+            String projectName = projectRepository.findById(projectId)
+                    .map(ProjectEntity::getName).orElse(null);
+            inviteNotifications.notifyInvited(recipient, inviterEmail, projectName, expiresAt);
+        } catch (RuntimeException ex) {
+            log.warn("Failed to enqueue invite notification for {}", recipient, ex);
+        }
     }
 
     @Transactional

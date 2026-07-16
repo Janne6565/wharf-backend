@@ -34,6 +34,12 @@ public record RateLimitProperties(
         int recoveryCapacity,
 
         @NotNull
-        Duration recoveryRefillPeriod
+        Duration recoveryRefillPeriod,
+
+        @Min(1)
+        int inviteCapacity,
+
+        @NotNull
+        Duration inviteRefillPeriod
 ) {
 }

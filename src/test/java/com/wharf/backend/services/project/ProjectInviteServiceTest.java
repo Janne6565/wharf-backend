@@ -32,7 +32,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -50,6 +53,8 @@ class ProjectInviteServiceTest {
     private ProjectVaultRepository projectVaultRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private InviteNotificationService inviteNotifications;
 
     private ProjectInviteService service;
 
@@ -62,7 +67,8 @@ class ProjectInviteServiceTest {
     void setUp() {
         ProjectAccessService access = new ProjectAccessService(memberRepository);
         service = new ProjectInviteService(inviteRepository, memberRepository, projectRepository,
-                projectVaultRepository, userRepository, access, new ProjectProperties(Duration.ofDays(14)));
+                projectVaultRepository, userRepository, access, new ProjectProperties(Duration.ofDays(14)),
+                inviteNotifications);
     }
 
     private void stubAdmin() {
@@ -92,6 +98,22 @@ class ProjectInviteServiceTest {
         ProjectInviteDto dto = service.createInvite(projectId, adminId, new CreateInviteRequest("Invitee@Acme.io "));
 
         assertThat(dto.email()).isEqualTo(email);
+        verify(inviteRepository).save(any());
+        // Notification is fired for the normalized recipient with the invite's expiry.
+        verify(inviteNotifications).notifyInvited(eq(email), any(), any(), eq(dto.expiresAt()));
+    }
+
+    @Test
+    void createInvite_notificationFailure_doesNotFailInvite() {
+        stubAdmin();
+        when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
+        when(inviteRepository.findByProjectIdAndEmail(projectId, email)).thenReturn(Optional.empty());
+        when(inviteRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        doThrow(new RuntimeException("mail down")).when(inviteNotifications)
+                .notifyInvited(any(), any(), any(), any());
+
+        assertThatCode(() -> service.createInvite(projectId, adminId, new CreateInviteRequest(email)))
+                .doesNotThrowAnyException();
         verify(inviteRepository).save(any());
     }
 
