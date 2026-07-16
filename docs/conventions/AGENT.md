@@ -1,10 +1,28 @@
-<!-- AUTO-SYNCED from agents KB: AGENT.md @ b285312.
+<!-- AUTO-SYNCED from agents KB: AGENT.md @ 043bdf9.
      Do NOT edit here — edit the source in ~/projects/agents and re-run scripts/sync-conventions.sh. -->
 
 # Agent Rules
 
 This file defines general rules and guidelines that apply to **all projects**, regardless of technology.
 Technology-specific rules live in `/technologies/`.
+
+---
+
+## Model Roles & Orchestration
+
+When the session runs on **Claude Fable 5** (model id `claude-fable-5`):
+
+- Fable 5 is **never used as a coding agent**. It does not write or edit product code
+  directly.
+- Fable 5's role is **architecture and validation**: understand the task, read the
+  relevant code and conventions, design the change (files, structure, contracts, naming,
+  i18n keys, tests), then **delegate the implementation to Opus 4.8 subagents**
+  (Agent tool with `model: "opus"`), giving each a precise, self-contained spec.
+- After a subagent finishes, Fable 5 **validates** the result: review the diff against
+  the spec and the KB conventions, run typecheck/lint/tests, and send follow-up fixes
+  back to the (or a new) Opus agent rather than patching the code itself.
+- Trivial non-code chores (running builds/tests, git operations, file listing) stay
+  with Fable 5 — the rule covers writing code, not operating tools.
 
 ---
 
