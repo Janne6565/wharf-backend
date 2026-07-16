@@ -71,6 +71,15 @@ class OAuthEndpointsIntegrationTest {
     }
 
     @Test
+    void authorize_mobileDisabledProvider_redirectsToDeepLinkWithError() throws Exception {
+        // The client is known from the query param even when the provider is disabled, so a
+        // mobile authorize error goes to the wharf:// deep link, not /oauth/complete.
+        mockMvc.perform(get("/api/v1/auth/oauth/google/authorize").param("client", "mobile"))
+                .andExpect(status().isFound())
+                .andExpect(header().string("Location", "wharf://oauth?error=provider_disabled"));
+    }
+
+    @Test
     void registeredUser_profileFlagsAllTrue_andSetupRejected() throws Exception {
         String email = "flags@acme.io";
         String registerBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()

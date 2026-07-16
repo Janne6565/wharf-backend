@@ -1,7 +1,10 @@
 package com.wharf.backend.entity;
 
+import com.wharf.backend.model.core.OAuthClient;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -33,4 +36,9 @@ public class OAuthStateEntity {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    /** Which client began the flow — decides how the callback hands the session back. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "client", nullable = false, updatable = false)
+    private OAuthClient client;
 }

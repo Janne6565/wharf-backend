@@ -3,8 +3,11 @@ package com.wharf.backend.services.auth.oauth;
 import com.wharf.backend.configuration.OAuthProperties;
 import com.wharf.backend.entity.OAuthStateEntity;
 import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.model.core.DeviceCodeResponse;
+import com.wharf.backend.model.core.OAuthClient;
 import com.wharf.backend.model.core.OAuthProvider;
 import com.wharf.backend.security.JwtService;
+import com.wharf.backend.services.devicecode.DeviceCodeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +38,8 @@ class OAuthServiceTest {
     @Mock
     private JwtService jwtService;
     @Mock
+    private DeviceCodeService deviceCodeService;
+    @Mock
     private OAuthProviderClient githubClient;
 
     private OAuthService service;
@@ -45,9 +50,11 @@ class OAuthServiceTest {
         // GitHub configured, Google left unconfigured (disabled).
         OAuthProperties properties = new OAuthProperties(
                 "http://localhost:8080",
+                "wharf://oauth",
                 new OAuthProperties.Credentials("", ""),
                 new OAuthProperties.Credentials("gh-id", "gh-secret"));
-        service = new OAuthService(properties, stateStore, userService, jwtService, List.of(githubClient));
+        service = new OAuthService(properties, stateStore, userService, jwtService, deviceCodeService,
+                List.of(githubClient));
     }
 
     @Test
@@ -57,9 +64,9 @@ class OAuthServiceTest {
 
     @Test
     void buildAuthorizationUrl_containsRequiredParams() {
-        when(stateStore.issue()).thenReturn("state-xyz");
+        when(stateStore.issue(OAuthClient.WEB)).thenReturn("state-xyz");
 
-        String url = service.buildAuthorizationUrl("github");
+        String url = service.buildAuthorizationUrl("github", OAuthClient.WEB);
 
         assertThat(url)
                 .startsWith(OAuthProvider.GITHUB.getAuthorizationUri())
@@ -70,8 +77,18 @@ class OAuthServiceTest {
     }
 
     @Test
+    void buildAuthorizationUrl_mobileClient_persistsMobileState() {
+        when(stateStore.issue(OAuthClient.MOBILE)).thenReturn("state-mob");
+
+        String url = service.buildAuthorizationUrl("github", OAuthClient.MOBILE);
+
+        assertThat(url).startsWith(OAuthProvider.GITHUB.getAuthorizationUri()).contains("state=state-mob");
+        verify(stateStore).issue(OAuthClient.MOBILE);
+    }
+
+    @Test
     void buildAuthorizationUrl_disabledProvider_throwsProviderDisabled() {
-        assertThatThrownBy(() -> service.buildAuthorizationUrl("google"))
+        assertThatThrownBy(() -> service.buildAuthorizationUrl("google", OAuthClient.WEB))
                 .isInstanceOf(OAuthCallbackException.class)
                 .satisfies(e -> assertThat(((OAuthCallbackException) e).getErrorCode())
                         .isEqualTo(OAuthErrorCode.PROVIDER_DISABLED));
@@ -79,7 +96,7 @@ class OAuthServiceTest {
 
     @Test
     void buildAuthorizationUrl_unknownProvider_throwsProviderDisabled() {
-        assertThatThrownBy(() -> service.buildAuthorizationUrl("bitbucket"))
+        assertThatThrownBy(() -> service.buildAuthorizationUrl("bitbucket", OAuthClient.WEB))
                 .isInstanceOf(OAuthCallbackException.class)
                 .satisfies(e -> assertThat(((OAuthCallbackException) e).getErrorCode())
                         .isEqualTo(OAuthErrorCode.PROVIDER_DISABLED));
@@ -98,7 +115,7 @@ class OAuthServiceTest {
 
     @Test
     void handleCallback_unverifiedEmail_throwsEmailNotVerified() {
-        when(stateStore.consume("valid")).thenReturn(Optional.of(state()));
+        when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.WEB)));
         when(githubClient.authenticate(eq("code"), any(), any()))
                 .thenReturn(new OAuthUserIdentity("gh-1", "a@a.com", false));
 
@@ -107,6 +124,21 @@ class OAuthServiceTest {
                 .satisfies(e -> assertThat(((OAuthCallbackException) e).getErrorCode())
                         .isEqualTo(OAuthErrorCode.EMAIL_NOT_VERIFIED));
         verify(userService, never()).findOrCreateAndLink(any(), any());
+    }
+
+    @Test
+    void handleCallback_mobileUnverifiedEmail_tagsFailureWithMobileClient() {
+        when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.MOBILE)));
+        when(githubClient.authenticate(eq("code"), any(), any()))
+                .thenReturn(new OAuthUserIdentity("gh-1", "a@a.com", false));
+
+        assertThatThrownBy(() -> service.handleCallback("github", "code", "valid"))
+                .isInstanceOf(OAuthCallbackException.class)
+                .satisfies(e -> {
+                    assertThat(((OAuthCallbackException) e).getErrorCode()).isEqualTo(OAuthErrorCode.EMAIL_NOT_VERIFIED);
+                    assertThat(((OAuthCallbackException) e).getClient()).isEqualTo(OAuthClient.MOBILE);
+                });
+        verify(deviceCodeService, never()).issue(any());
     }
 
     @Test
@@ -119,22 +151,46 @@ class OAuthServiceTest {
     }
 
     @Test
-    void handleCallback_verifiedEmail_resolvesUserAndIssuesRefreshToken() {
+    void handleCallback_webClient_resolvesUserAndIssuesRefreshToken() {
         UserEntity user = UserEntity.builder()
                 .id(UUID.randomUUID()).email("a@a.com").tokenVersion(0).createdAt(Instant.now()).build();
-        when(stateStore.consume("valid")).thenReturn(Optional.of(state()));
+        when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.WEB)));
         OAuthUserIdentity identity = new OAuthUserIdentity("gh-1", "a@a.com", true);
         when(githubClient.authenticate(eq("code"), any(), any())).thenReturn(identity);
         when(userService.findOrCreateAndLink(OAuthProvider.GITHUB, identity)).thenReturn(user);
         when(jwtService.issueRefreshToken(user)).thenReturn("refresh-token");
 
-        OAuthService.OAuthLoginResult result = service.handleCallback("github", "code", "valid");
+        OAuthLoginResult result = service.handleCallback("github", "code", "valid");
 
-        assertThat(result.user()).isSameAs(user);
-        assertThat(result.refreshToken()).isEqualTo("refresh-token");
+        assertThat(result).isInstanceOfSatisfying(OAuthLoginResult.Web.class, web -> {
+            assertThat(web.user()).isSameAs(user);
+            assertThat(web.refreshToken()).isEqualTo("refresh-token");
+        });
+        verify(deviceCodeService, never()).issue(any());
     }
 
-    private OAuthStateEntity state() {
-        return OAuthStateEntity.builder().state("valid").createdAt(Instant.now()).build();
+    @Test
+    void handleCallback_mobileClient_resolvesUserAndIssuesDeviceCode() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = UserEntity.builder()
+                .id(userId).email("a@a.com").tokenVersion(0).createdAt(Instant.now()).build();
+        when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.MOBILE)));
+        OAuthUserIdentity identity = new OAuthUserIdentity("gh-1", "a@a.com", true);
+        when(githubClient.authenticate(eq("code"), any(), any())).thenReturn(identity);
+        when(userService.findOrCreateAndLink(OAuthProvider.GITHUB, identity)).thenReturn(user);
+        when(deviceCodeService.issue(userId)).thenReturn(new DeviceCodeResponse("K7PQM2XR", Instant.now()));
+
+        OAuthLoginResult result = service.handleCallback("github", "code", "valid");
+
+        assertThat(result).isInstanceOfSatisfying(OAuthLoginResult.Mobile.class, mobile -> {
+            assertThat(mobile.user()).isSameAs(user);
+            assertThat(mobile.deviceCode()).isEqualTo("K7PQM2XR");
+        });
+        // Mobile must not mint a refresh token — that would be an orphaned live credential.
+        verify(jwtService, never()).issueRefreshToken(any());
+    }
+
+    private OAuthStateEntity state(OAuthClient client) {
+        return OAuthStateEntity.builder().state("valid").createdAt(Instant.now()).client(client).build();
     }
 }

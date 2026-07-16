@@ -1,11 +1,14 @@
 package com.wharf.backend.controller.v1;
 
+import com.wharf.backend.configuration.OAuthProperties;
 import com.wharf.backend.controller.v1.implementation.OAuthController;
 import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.model.core.OAuthClient;
 import com.wharf.backend.model.core.OAuthProvidersResponse;
 import com.wharf.backend.security.RefreshCookieFactory;
 import com.wharf.backend.services.auth.oauth.OAuthCallbackException;
 import com.wharf.backend.services.auth.oauth.OAuthErrorCode;
+import com.wharf.backend.services.auth.oauth.OAuthLoginResult;
 import com.wharf.backend.services.auth.oauth.OAuthService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +32,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class OAuthControllerTest {
 
+    private static final String MOBILE_REDIRECT_URI = "wharf://oauth";
+
     @Mock
     private OAuthService oAuthService;
     @Mock
@@ -38,7 +43,11 @@ class OAuthControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new OAuthController(oAuthService, refreshCookieFactory);
+        OAuthProperties properties = new OAuthProperties(
+                "http://localhost:8080", MOBILE_REDIRECT_URI,
+                new OAuthProperties.Credentials("", ""),
+                new OAuthProperties.Credentials("gh-id", "gh-secret"));
+        controller = new OAuthController(oAuthService, refreshCookieFactory, properties);
     }
 
     @Test
@@ -53,10 +62,21 @@ class OAuthControllerTest {
 
     @Test
     void authorize_redirectsToProviderConsentUrl() {
-        when(oAuthService.buildAuthorizationUrl("github"))
+        when(oAuthService.buildAuthorizationUrl("github", OAuthClient.WEB))
                 .thenReturn("https://github.com/login/oauth/authorize?client_id=abc");
 
-        ResponseEntity<Void> resp = controller.authorize("github", new MockHttpServletResponse());
+        ResponseEntity<Void> resp = controller.authorize("github", "web", new MockHttpServletResponse());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(resp.getHeaders().getLocation().toString()).contains("github.com/login/oauth/authorize");
+    }
+
+    @Test
+    void authorize_mobileClient_buildsMobileAuthorizationUrl() {
+        when(oAuthService.buildAuthorizationUrl("github", OAuthClient.MOBILE))
+                .thenReturn("https://github.com/login/oauth/authorize?client_id=abc");
+
+        ResponseEntity<Void> resp = controller.authorize("github", "mobile", new MockHttpServletResponse());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
         assertThat(resp.getHeaders().getLocation().toString()).contains("github.com/login/oauth/authorize");
@@ -64,21 +84,32 @@ class OAuthControllerTest {
 
     @Test
     void authorize_disabledProvider_redirectsToCompleteWithError() {
-        when(oAuthService.buildAuthorizationUrl("google"))
+        when(oAuthService.buildAuthorizationUrl("google", OAuthClient.WEB))
                 .thenThrow(new OAuthCallbackException(OAuthErrorCode.PROVIDER_DISABLED));
 
-        ResponseEntity<Void> resp = controller.authorize("google", new MockHttpServletResponse());
+        ResponseEntity<Void> resp = controller.authorize("google", "web", new MockHttpServletResponse());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
         assertThat(resp.getHeaders().getLocation().toString()).isEqualTo("/oauth/complete?error=provider_disabled");
     }
 
     @Test
-    void callback_success_setsRefreshCookieAndRedirectsToComplete() {
+    void authorize_mobileDisabledProvider_redirectsToDeepLinkWithError() {
+        when(oAuthService.buildAuthorizationUrl("google", OAuthClient.MOBILE))
+                .thenThrow(new OAuthCallbackException(OAuthErrorCode.PROVIDER_DISABLED));
+
+        ResponseEntity<Void> resp = controller.authorize("google", "mobile", new MockHttpServletResponse());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(resp.getHeaders().getLocation().toString()).isEqualTo("wharf://oauth?error=provider_disabled");
+    }
+
+    @Test
+    void callback_webSuccess_setsRefreshCookieAndRedirectsToComplete() {
         UserEntity user = UserEntity.builder()
                 .id(UUID.randomUUID()).email("a@a.com").tokenVersion(0).createdAt(Instant.now()).build();
         when(oAuthService.handleCallback("github", "code", "state"))
-                .thenReturn(new OAuthService.OAuthLoginResult(user, "refresh-token"));
+                .thenReturn(new OAuthLoginResult.Web(user, "refresh-token"));
         when(refreshCookieFactory.create("refresh-token"))
                 .thenReturn(ResponseCookie.from("wharf_refresh", "refresh-token").httpOnly(true).build());
 
@@ -92,14 +123,53 @@ class OAuthControllerTest {
     }
 
     @Test
-    void callback_oauthFailure_redirectsToCompleteWithErrorCode() {
+    void callback_mobileSuccess_redirectsToDeepLinkWithCodeAndSetsNoCookie() {
+        UserEntity user = UserEntity.builder()
+                .id(UUID.randomUUID()).email("a@a.com").tokenVersion(0).createdAt(Instant.now()).build();
+        when(oAuthService.handleCallback("github", "code", "state"))
+                .thenReturn(new OAuthLoginResult.Mobile(user, "K7PQM2XR"));
+
+        MockHttpServletResponse servletResponse = new MockHttpServletResponse();
+        ResponseEntity<Void> resp = controller.callback("github", "code", "state", servletResponse);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(resp.getHeaders().getLocation().toString()).isEqualTo("wharf://oauth?code=K7PQM2XR");
+        // No cookie is ever set for a mobile flow.
+        assertThat(servletResponse.getHeader("Set-Cookie")).isNull();
+    }
+
+    @Test
+    void callback_webFailure_redirectsToCompleteWithErrorCode() {
         when(oAuthService.handleCallback(anyString(), anyString(), anyString()))
-                .thenThrow(new OAuthCallbackException(OAuthErrorCode.EMAIL_NOT_VERIFIED));
+                .thenThrow(new OAuthCallbackException(OAuthErrorCode.EMAIL_NOT_VERIFIED, OAuthClient.WEB));
 
         ResponseEntity<Void> resp = controller.callback("github", "code", "state", new MockHttpServletResponse());
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
         assertThat(resp.getHeaders().getLocation().toString()).isEqualTo("/oauth/complete?error=email_not_verified");
+    }
+
+    @Test
+    void callback_mobileFailure_redirectsToDeepLinkWithErrorCode() {
+        when(oAuthService.handleCallback(anyString(), anyString(), anyString()))
+                .thenThrow(new OAuthCallbackException(OAuthErrorCode.EMAIL_NOT_VERIFIED, OAuthClient.MOBILE));
+
+        ResponseEntity<Void> resp = controller.callback("github", "code", "state", new MockHttpServletResponse());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(resp.getHeaders().getLocation().toString()).isEqualTo("wharf://oauth?error=email_not_verified");
+    }
+
+    @Test
+    void callback_invalidState_alwaysRedirectsToWebComplete() {
+        // The client is unknowable for an unknown state, so it defaults to the web target.
+        when(oAuthService.handleCallback(anyString(), anyString(), anyString()))
+                .thenThrow(new OAuthCallbackException(OAuthErrorCode.INVALID_STATE));
+
+        ResponseEntity<Void> resp = controller.callback("github", "code", "state", new MockHttpServletResponse());
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.FOUND);
+        assertThat(resp.getHeaders().getLocation().toString()).isEqualTo("/oauth/complete?error=invalid_state");
     }
 
     @Test

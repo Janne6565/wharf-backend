@@ -1,10 +1,12 @@
 package com.wharf.backend.services.auth.oauth;
 
 import com.wharf.backend.entity.OAuthStateEntity;
+import com.wharf.backend.model.core.OAuthClient;
 import com.wharf.backend.repository.OAuthStateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -34,10 +36,21 @@ class OAuthStateStoreTest {
     void issue_savesAndReturnsRandomState() {
         when(stateRepository.save(any(OAuthStateEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        String state = store.issue();
+        String state = store.issue(OAuthClient.WEB);
 
         assertThat(state).isNotBlank().matches("[0-9a-f-]{36}");
         verify(stateRepository).save(any(OAuthStateEntity.class));
+    }
+
+    @Test
+    void issue_persistsInitiatingClientOnTheStateRow() {
+        when(stateRepository.save(any(OAuthStateEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        store.issue(OAuthClient.MOBILE);
+
+        ArgumentCaptor<OAuthStateEntity> saved = ArgumentCaptor.forClass(OAuthStateEntity.class);
+        verify(stateRepository).save(saved.capture());
+        assertThat(saved.getValue().getClient()).isEqualTo(OAuthClient.MOBILE);
     }
 
     @Test

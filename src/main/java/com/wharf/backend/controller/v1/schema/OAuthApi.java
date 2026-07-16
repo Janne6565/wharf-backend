@@ -16,6 +16,12 @@ import org.springframework.web.bind.annotation.RequestParam;
  * OAuth social login (Google, GitHub). OAuth is only the authentication step: it links an
  * external identity to a local account, then the app issues its normal self-issued JWT
  * pair. All three endpoints are public and rate-limited.
+ *
+ * <p>Both the browser SPA and the mobile app use the same flow; the {@code client} query
+ * parameter on {@code /authorize} decides how the callback hands the session back — a web
+ * client gets an httpOnly refresh cookie and a redirect to {@code /oauth/complete}, a mobile
+ * client (which cannot use cookies) gets a one-time device code over a {@code wharf://oauth}
+ * deep link, which it then exchanges at {@code /device-codes/exchange} for a DIRECT session.
  */
 @RequestMapping("/api/v1/auth/oauth")
 @Tag(name = "OAuth", description = "Google / GitHub social login (links an external identity, then issues the app's own JWTs)")
@@ -31,23 +37,32 @@ public interface OAuthApi {
     @GetMapping("/{provider}/authorize")
     @Operation(operationId = "oauthAuthorize",
             summary = "Begin the OAuth authorization-code flow",
-            description = "302-redirects to the provider's consent page with a one-time state. "
-                    + "A disabled/unknown provider redirects to /oauth/complete?error=provider_disabled.")
-    @ApiResponse(responseCode = "302", description = "Redirect to the provider consent page (or to /oauth/complete on error)")
+            description = "302-redirects to the provider's consent page with a one-time state that records the "
+                    + "initiating client. Pass client=mobile to hand the session back over the wharf://oauth deep "
+                    + "link (default web). A disabled/unknown provider redirects to the matching error target: "
+                    + "/oauth/complete?error=provider_disabled for web, wharf://oauth?error=provider_disabled for mobile.")
+    @ApiResponse(responseCode = "302", description = "Redirect to the provider consent page (or to the error target on error)")
     ResponseEntity<Void> authorize(
             @Parameter(description = "Provider slug: google or github", required = true)
             @PathVariable String provider,
+            @Parameter(description = "Initiating client: web (default) or mobile. mobile hands the session back "
+                    + "over the wharf://oauth deep link instead of a refresh cookie.")
+            @RequestParam(defaultValue = "web") String client,
             HttpServletResponse response);
 
     @GetMapping("/{provider}/callback")
     @Operation(operationId = "oauthCallback",
             summary = "Handle the OAuth provider callback",
-            description = "Validates and consumes the state, exchanges the code server-to-server, requires a verified "
-                    + "email, links/creates the local account, sets the httpOnly refresh cookie and 302-redirects to "
-                    + "/oauth/complete. On any failure it redirects to /oauth/complete?error=<code> "
-                    + "(provider_disabled | invalid_state | email_not_verified | provider_error | server_error).")
+            description = "Validates and consumes the state (which carries the initiating client), exchanges the code "
+                    + "server-to-server, requires a verified email and links/creates the local account. For a web "
+                    + "flow it sets the httpOnly refresh cookie and 302-redirects to /oauth/complete; for a mobile "
+                    + "flow it issues a one-time device code and 302-redirects to wharf://oauth?code=<code> (no "
+                    + "cookie). On failure it redirects to the client's error target with ?error=<code> "
+                    + "(provider_disabled | email_not_verified | provider_error | server_error); invalid_state, whose "
+                    + "client is unknowable, always uses the web target /oauth/complete?error=invalid_state.")
     @ApiResponse(responseCode = "302",
-            description = "Redirect to /oauth/complete on success (with refresh cookie) or /oauth/complete?error=<code> on failure")
+            description = "Web: /oauth/complete (+ refresh cookie) or /oauth/complete?error=<code>. "
+                    + "Mobile: wharf://oauth?code=<code> or wharf://oauth?error=<code>.")
     ResponseEntity<Void> callback(
             @Parameter(description = "Provider slug: google or github", required = true)
             @PathVariable String provider,

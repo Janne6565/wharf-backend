@@ -96,8 +96,8 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 | `POST /auth/recover/reset` | `{email, recoveryAuthKey, newAuthKey, newRecoveryAuthKey, vault}` | `{user, tokens}` — atomically replaces the credential hashes + vault and revokes all sessions |
 | `POST /device-codes/exchange` | `{code, deviceName?}` | `{user, accessToken, refreshToken}` (always DIRECT — the TUI). One-time; wrong code → `404`, expired/used → `410` |
 | `GET /auth/oauth/providers` | — | `{providers}` — slugs of enabled providers, e.g. `{"providers":["google","github"]}` (empty when none configured) |
-| `GET /auth/oauth/{provider}/authorize` | — | `302` to the provider consent page (one-time `state`); disabled provider → `302 /oauth/complete?error=provider_disabled` |
-| `GET /auth/oauth/{provider}/callback` | `?code&state` | `302 /oauth/complete` + refresh cookie on success, else `302 /oauth/complete?error=<code>` (see [OAuth](#oauth-social-login)) |
+| `GET /auth/oauth/{provider}/authorize` | `?client=web\|mobile` | `302` to the provider consent page (one-time `state`); `client=mobile` records a mobile flow (default `web`); disabled provider → `302 …?error=provider_disabled` (web `/oauth/complete`, mobile `wharf://oauth`) |
+| `GET /auth/oauth/{provider}/callback` | `?code&state` | Web: `302 /oauth/complete` + refresh cookie. Mobile: `302 wharf://oauth?code=<device-code>` (no cookie; exchange at `/device-codes/exchange`). Failure → `…?error=<code>` on the client's target (see [OAuth](#oauth-social-login)) |
 
 ### Authenticated (`Authorization: Bearer <identity token>`)
 
@@ -224,6 +224,25 @@ password auth key, no recovery key and no vault**. The user sets those *after* f
    of `provider_disabled`, `invalid_state`, `email_not_verified`, `provider_error`,
    `server_error` (no sensitive detail ever reaches the URL).
 
+### Mobile hand-off (deep link)
+
+The React Native app (custom URL scheme `wharf`) uses the **same** flow but cannot receive a
+cookie, so it opts in with `GET /api/v1/auth/oauth/{provider}/authorize?client=mobile`. The
+initiating client (`web` default | `mobile`) is recorded on the one-time `state` row, so the
+callback knows how to finish. For a mobile flow the backend does **not** set the refresh
+cookie: it issues a one-time **device code** for the resolved user (via the same
+`/device-codes` machinery) and `302`-redirects to the server-controlled deep link
+`wharf://oauth?code=<code>`. The app then exchanges that code at the existing public
+`POST /api/v1/device-codes/exchange` for a **DIRECT** session (tokens in the body) — there is
+no mobile-specific exchange endpoint, and no orphaned refresh token is ever minted.
+
+Mobile failures redirect to `wharf://oauth?error=<code>` with the same error codes
+(`provider_disabled`, `email_not_verified`, `provider_error`, `server_error`). The one
+exception is `invalid_state`: the state row is unknown, so the initiating client is
+unknowable and it falls back to the web target `/oauth/complete?error=invalid_state`. The
+deep-link base is server config (`oauth.mobile-redirect-uri`, default `wharf://oauth`), never
+caller-supplied — the no-open-redirect stance holds for mobile too.
+
 A provider is **enabled only when both its client id and secret are configured**; otherwise
 `/authorize` and `/callback` redirect with `error=provider_disabled` and it is omitted from
 `/providers`. Everything builds and runs with no credentials set.
@@ -245,6 +264,7 @@ All secrets come from the environment; empty defaults keep providers disabled an
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `OAUTH_PUBLIC_BASE_URL` | `http://localhost:8080` (dev) / `https://wharf.jannekeipert.de` (prod) | Builds the provider `redirect_uri` `<base>/api/v1/auth/oauth/{provider}/callback` |
+| `OAUTH_MOBILE_REDIRECT_URI` | `wharf://oauth` | Server-controlled deep-link base a mobile-initiated login is handed back through (`?code=` / `?error=`) |
 | `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | _(empty → disabled)_ | Google OAuth client credentials |
 | `OAUTH_GITHUB_CLIENT_ID` / `OAUTH_GITHUB_CLIENT_SECRET` | _(empty → disabled)_ | GitHub OAuth app credentials |
 
@@ -302,7 +322,7 @@ curl -s http://localhost:18080/v3/api-docs | python3 -m json.tool > openapi.json
 | `SPRING_PROFILES_ACTIVE` | `dev` | `dev` (H2) or `prod` (PostgreSQL) |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/wharf` / `wharf` / _(required)_ | prod profile only; `DB_PASSWORD` has no default and must be supplied |
 | `CORS_ALLOWED_ORIGINS` | `https://wharf.sh` (prod) / `http://localhost:5173` (dev) | comma-separated (`app.cors.allowed-origins`) |
-| `OAUTH_PUBLIC_BASE_URL`, `OAUTH_{GOOGLE,GITHUB}_CLIENT_{ID,SECRET}` | empty (providers disabled) | OAuth social login — see [OAuth social login](#oauth-social-login) |
+| `OAUTH_PUBLIC_BASE_URL`, `OAUTH_MOBILE_REDIRECT_URI`, `OAUTH_{GOOGLE,GITHUB}_CLIENT_{ID,SECRET}` | empty (providers disabled); mobile redirect `wharf://oauth` | OAuth social login — see [OAuth social login](#oauth-social-login) |
 
 Other tunables live in `application.properties`: `jwt.identity-expiration`,
 `jwt.refresh-expiration`, `auth.cookie.*`, `vault.max-size-bytes`, `device-code.ttl`,

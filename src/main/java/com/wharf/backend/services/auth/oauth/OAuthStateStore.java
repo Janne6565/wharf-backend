@@ -1,6 +1,7 @@
 package com.wharf.backend.services.auth.oauth;
 
 import com.wharf.backend.entity.OAuthStateEntity;
+import com.wharf.backend.model.core.OAuthClient;
 import com.wharf.backend.repository.OAuthStateRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -29,11 +30,12 @@ public class OAuthStateStore {
     }
 
     @Transactional
-    public String issue() {
+    public String issue(OAuthClient client) {
         String state = UUID.randomUUID().toString();
         stateRepository.save(OAuthStateEntity.builder()
                 .state(state)
                 .createdAt(Instant.now())
+                .client(client)
                 .build());
         return state;
     }

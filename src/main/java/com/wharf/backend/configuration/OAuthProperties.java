@@ -13,6 +13,10 @@ import org.springframework.validation.annotation.Validated;
  * treated as <em>disabled</em> until both are supplied (via {@code OAUTH_GOOGLE_CLIENT_ID}
  * etc.). Only the credentials are configuration; each provider's protocol endpoints and
  * scopes are fixed constants on {@link OAuthProvider}.
+ *
+ * <p>{@code mobileRedirectUri} is the server-controlled deep-link base a mobile-initiated
+ * login is handed back through (never caller-supplied — this preserves the no-open-redirect
+ * stance). It defaults to the app's custom {@code wharf://oauth} scheme.
  */
 @Validated
 @ConfigurationProperties(prefix = "oauth")
@@ -21,10 +25,22 @@ public record OAuthProperties(
         @NotBlank
         String publicBaseUrl,
 
+        @NotBlank
+        String mobileRedirectUri,
+
         Credentials google,
 
         Credentials github
 ) {
+
+    /** Default deep-link base for the mobile hand-off when {@code oauth.mobile-redirect-uri} is unset. */
+    private static final String DEFAULT_MOBILE_REDIRECT_URI = "wharf://oauth";
+
+    public OAuthProperties {
+        if (mobileRedirectUri == null || mobileRedirectUri.isBlank()) {
+            mobileRedirectUri = DEFAULT_MOBILE_REDIRECT_URI;
+        }
+    }
 
     public record Credentials(String clientId, String clientSecret) {
 

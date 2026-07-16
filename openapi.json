@@ -1563,7 +1563,7 @@
                     "OAuth"
                 ],
                 "summary": "Handle the OAuth provider callback",
-                "description": "Validates and consumes the state, exchanges the code server-to-server, requires a verified email, links/creates the local account, sets the httpOnly refresh cookie and 302-redirects to /oauth/complete. On any failure it redirects to /oauth/complete?error=<code> (provider_disabled | invalid_state | email_not_verified | provider_error | server_error).",
+                "description": "Validates and consumes the state (which carries the initiating client), exchanges the code server-to-server, requires a verified email and links/creates the local account. For a web flow it sets the httpOnly refresh cookie and 302-redirects to /oauth/complete; for a mobile flow it issues a one-time device code and 302-redirects to wharf://oauth?code=<code> (no cookie). On failure it redirects to the client's error target with ?error=<code> (provider_disabled | email_not_verified | provider_error | server_error); invalid_state, whose client is unknowable, always uses the web target /oauth/complete?error=invalid_state.",
                 "operationId": "oauthCallback",
                 "parameters": [
                     {
@@ -1596,7 +1596,7 @@
                 ],
                 "responses": {
                     "302": {
-                        "description": "Redirect to /oauth/complete on success (with refresh cookie) or /oauth/complete?error=<code> on failure"
+                        "description": "Web: /oauth/complete (+ refresh cookie) or /oauth/complete?error=<code>. Mobile: wharf://oauth?code=<code> or wharf://oauth?error=<code>."
                     }
                 }
             }
@@ -1607,7 +1607,7 @@
                     "OAuth"
                 ],
                 "summary": "Begin the OAuth authorization-code flow",
-                "description": "302-redirects to the provider's consent page with a one-time state. A disabled/unknown provider redirects to /oauth/complete?error=provider_disabled.",
+                "description": "302-redirects to the provider's consent page with a one-time state that records the initiating client. Pass client=mobile to hand the session back over the wharf://oauth deep link (default web). A disabled/unknown provider redirects to the matching error target: /oauth/complete?error=provider_disabled for web, wharf://oauth?error=provider_disabled for mobile.",
                 "operationId": "oauthAuthorize",
                 "parameters": [
                     {
@@ -1618,11 +1618,21 @@
                         "schema": {
                             "type": "string"
                         }
+                    },
+                    {
+                        "name": "client",
+                        "in": "query",
+                        "description": "Initiating client: web (default) or mobile. mobile hands the session back over the wharf://oauth deep link instead of a refresh cookie.",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "default": "web"
+                        }
                     }
                 ],
                 "responses": {
                     "302": {
-                        "description": "Redirect to the provider consent page (or to /oauth/complete on error)"
+                        "description": "Redirect to the provider consent page (or to the error target on error)"
                     }
                 }
             }
