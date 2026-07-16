@@ -41,7 +41,7 @@ class VaultServiceTest {
 
     @BeforeEach
     void setUp() {
-        vaultService = new VaultService(vaultRepository, new VaultProperties(MAX_SIZE));
+        vaultService = new VaultService(vaultRepository, new VaultBlobCodec(new VaultProperties(MAX_SIZE)));
     }
 
     private String base64(String plain) {

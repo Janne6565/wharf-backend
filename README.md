@@ -39,6 +39,47 @@ Server-side hardening:
 
 ---
 
+## Projects crypto contract
+
+Wharf **Projects** are shared vaults: a project holds its own document sealed under a
+per-project **data-encryption key (DEK)**, and that DEK is delivered to each member by
+wrapping it to their public key. As with the personal vault, all sealing and wrapping
+happen **client-side** — the server only ever stores and relays ciphertext and public keys.
+The Go client (wharf-tui `internal/vault`) and the browser client (wharf-web
+`src/crypto`) implement byte-for-byte identical formats, proven by a shared fixture test.
+
+**Project blob — `WHARFP` (v1, little-endian):**
+
+| off | len | field |
+|-----|-----|-------|
+| 0 | 6 | magic `WHARFP` |
+| 6 | 2 | version `uint16 = 1` |
+| 8 | 24 | body nonce (XChaCha20-Poly1305) |
+| 32 | … | `XChaCha20-Poly1305(nonce, projectDEK, payload JSON, AAD = header bytes[0:32])` |
+
+The 32-byte header (magic + version + body nonce) is the AEAD's additional data, so any
+edit to it fails authentication. A fresh nonce is drawn on every seal.
+
+**DEK wrapping — X25519 sealed box:** the project DEK is shared with a member by sealing
+it to their X25519 public key with libsodium's `crypto_box_seal` (NaCl anonymous box). The
+wrapped DEK is **exactly 80 bytes**: 32-byte ephemeral public key + 32-byte DEK + 16-byte
+Poly1305 tag. The sender needs no long-term key (an ephemeral keypair is generated per
+wrap); only the recipient's private key can `crypto_box_seal_open` it.
+
+**Identity storage:** each member's X25519 **private key never leaves their encrypted
+personal vault** — it is stored inside the WHARFV payload document, which gains an optional
+`identity: { x25519Priv, x25519Pub, createdAt }` field (personal-vault document schema
+bumps 1 → 2; schema-1 documents remain valid with `identity` absent). Only the matching
+**public** key is published to the server for others to wrap DEKs to.
+
+**Trust caveat (v1):** the server distributes members' public keys, so it is trusted not to
+substitute them — a malicious or compromised server could perform a **man-in-the-middle**
+by handing out an attacker's public key. Out-of-band public-key verification is **out of
+scope for v1** and accepted as a known limitation; the payload contents themselves remain
+end-to-end encrypted regardless.
+
+---
+
 ## API
 
 Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.json)
@@ -70,6 +111,74 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 | `PUT /vault` | `{vault, expectedVersion}` | `{version, updatedAt}` · `409` on version conflict (optimistic concurrency) |
 
 All errors are RFC 7807 `application/problem+json`.
+
+### Projects (team workspaces)
+
+Zero-knowledge shared workspaces. The server stores only the opaque ciphertext project
+vault plus metadata (name/description, membership, roles, invites) and the per-member
+sealed DEKs — never the DEK, the project plaintext, or any private key. A caller who is
+**not a member of a project always receives `404` (never `403`)** on every project-scoped
+route, so project existence is never leaked.
+
+Account public key (used to seal DEKs against):
+
+| Method & path | Body | Result |
+|---------------|------|--------|
+| `GET /users/me` | — | now also returns `publicKey` (base64 or null) |
+| `PUT /users/me/public-key` | `{publicKey, rotate}` | `204` — publish (or, with `rotate=true`, replace) the account's 32-byte X25519 public key. `400` if not 32 bytes; `409` if a key exists and `rotate=false`. Rotating also **nulls every wrapped DEK the account holds**, so each membership re-enters the awaiting-key state |
+
+Projects & membership:
+
+| Method & path | Body | Result |
+|---------------|------|--------|
+| `POST /projects` | `{name, description?, vault, wrappedDek}` | `201 Project` — creates the project, its vault (v1) and the OWNER member (keyed). `412` if the caller has no published public key |
+| `GET /projects` | — | `[{id, name, description, role, memberCount, pendingInviteCount, vaultVersion, awaitingKey}]` |
+| `GET /projects/{id}` | — | full detail: metadata + `members[{userId, email, role, keyed, publicKey}]` + `invites[{id, email, createdAt, expiresAt}]` |
+| `PATCH /projects/{id}` | `{name?, description?}` | `200` — admin+ |
+| `DELETE /projects/{id}` | — | `204` — owner only |
+| `GET /projects/{id}/vault` | — | `{vault, version, updatedAt, wrappedDek}` — any member; `wrappedDek` is the **caller's** sealed DEK (null while awaiting key) |
+| `PUT /projects/{id}/vault` | `{vault, expectedVersion}` | `{version, updatedAt}` — any **keyed** member (`403` if the caller holds no wrapped key); `409` on version conflict |
+| `POST /projects/{id}/rotate` | `{removeUserId?, vault, expectedVersion, wrappedKeys:[{userId, wrappedDek}]}` | `{version, updatedAt}` — admin+; rotates the DEK, optionally removes a member (`400` removing the owner, `403` if an admin removes an admin), re-encrypts the vault and re-wraps the new DEK for the listed members (all others re-enter awaiting-key). `409` on version conflict |
+| `PATCH /projects/{id}/members/{userId}` | `{role}` | `204` — owner only; setting a member to `OWNER` transfers ownership and demotes the caller to `ADMIN` (single-owner invariant) |
+| `DELETE /projects/{id}/members/me` | — | `204` — leave; `409` if the caller is the owner (transfer first) |
+
+Key distribution:
+
+| Method & path | Body | Result |
+|---------------|------|--------|
+| `GET /projects/{id}/pending-keys` | — | `[{userId, email, publicKey}]` — admin+; members awaiting a key who have published a public key to seal against |
+| `POST /projects/{id}/members/{userId}/key` | `{wrappedDek, vaultVersion}` | `204` — admin+; seals the DEK to a member. `400` if the wrapped key is not 80 bytes; `409` if `vaultVersion` != the current vault version (guards wrapping a stale DEK across a rotation) |
+
+Invites (no email delivery in this milestone — surfaced to the invitee via their own listing):
+
+| Method & path | Body | Result |
+|---------------|------|--------|
+| `POST /projects/{id}/invites` | `{email}` | `201 ProjectInvite` — admin+; `409` if the email is already a member or already has an unexpired invite (an expired invite is replaced). TTL `wharf.projects.invite-ttl` (default 14 days) |
+| `DELETE /projects/{id}/invites/{inviteId}` | — | `204` — admin+ |
+| `GET /users/me/invites` | — | `[{id, projectId, projectName, invitedByEmail, createdAt, expiresAt}]` — unexpired invites addressed to the caller |
+| `POST /users/me/invites/{id}/accept` | — | `ProjectSummary` — join as an awaiting-key MEMBER and consume the invite. `404` if not addressed to the caller; `410` if expired |
+| `POST /users/me/invites/{id}/decline` | — | `204` |
+
+#### Projects crypto contract
+
+- The **project vault** is opaque WHARFP ciphertext, treated exactly like the personal
+  vault: never parsed, base64-encoded on the wire, capped at `vault.max-size-bytes`, with a
+  monotonic `version` for optimistic concurrency.
+- Each project has **one DEK**. It is distributed to members as **80-byte X25519 sealed
+  boxes** (`wrappedDek`) wrapped against each member's published 32-byte public key. The
+  server stores these sealed boxes and hands them out; it never unwraps or uses them.
+- A member with a `null` wrapped DEK is **awaiting key**: they have joined but no admin has
+  sealed the DEK to their public key yet, so they cannot open the vault (reads return a null
+  `wrappedDek`, writes are `403`).
+- **Rotation** is the revocation mechanism: it mints a new DEK, re-encrypts the vault and
+  re-wraps for the members who should keep access; a removed or omitted member is left with
+  no valid key to future secrets.
+- **Server-visible plaintext:** project name/description, member emails and roles, invite
+  emails. Everything inside the vault stays encrypted.
+- **Threat-model note (accepted for v1):** the server distributes members' public keys, so a
+  malicious server could substitute a key it controls and MITM the DEK wrapping. There is no
+  key verification (TOFU / fingerprint comparison) between members yet; this is accepted for
+  v1 and is the natural next hardening step.
 
 ### JWT model
 
@@ -208,12 +317,12 @@ Organised by component type (see `docs/conventions/SPRING_BOOT.md`):
 ```
 configuration/  @ConfigurationProperties + bean config (JWT, CORS, cookie, vault, rate-limit, OpenAPI)
 controller/     GlobalExceptionHandler + v1/{schema (*Api interfaces), implementation (*Controller)}
-entity/         UserEntity, VaultEntity, DeviceCodeEntity
-model/          action (request DTOs), core (response DTOs + TokenMode), exception (BaseException + domain)
+entity/         UserEntity, VaultEntity, DeviceCodeEntity, Project{,Vault,Member,Invite}Entity
+model/          action (request DTOs), core (response DTOs + TokenMode + ProjectRole), exception (BaseException + domain)
 repository/     Spring Data JPA repositories
 security/       SecurityConfig, JwtFilter, JwtService, RefreshCookieFactory, ratelimit/
-services/       auth/ (incl. oauth/ — provider clients, state store, linking), vault/, devicecode/, user/
-resources/db/migration/  V1__init.sql … V3__oauth.sql (Flyway)
+services/       auth/ (incl. oauth/), vault/ (incl. VaultBlobCodec), project/ (project, vault, invite, access), devicecode/, user/
+resources/db/migration/  V1__init.sql … V4__projects.sql (Flyway)
 ```
 
 ## Testing

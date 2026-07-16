@@ -1,48 +1,41 @@
 package com.wharf.backend.services.vault;
 
-import com.wharf.backend.configuration.VaultProperties;
 import com.wharf.backend.entity.VaultEntity;
 import com.wharf.backend.model.action.UpdateVaultRequest;
 import com.wharf.backend.model.core.VaultResponse;
 import com.wharf.backend.model.core.VaultUpdateResponse;
-import com.wharf.backend.model.exception.InvalidVaultPayloadException;
 import com.wharf.backend.model.exception.VaultNotFoundException;
-import com.wharf.backend.model.exception.VaultTooLargeException;
 import com.wharf.backend.model.exception.VaultVersionConflictException;
 import com.wharf.backend.repository.VaultRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.Base64;
 import java.util.UUID;
 
 /**
  * Manages the opaque ciphertext vault blob. The server never parses the blob; it only
- * base64-(de)codes it, enforces a size ceiling and tracks a monotonic version for
- * optimistic concurrency.
+ * base64-(de)codes it (via {@link VaultBlobCodec}), enforces a size ceiling and tracks a
+ * monotonic version for optimistic concurrency.
  */
 @Service
 public class VaultService {
 
     private static final long INITIAL_VERSION = 1L;
 
-    /** Slack over the exact base64 length to tolerate padding characters. */
-    private static final int BASE64_PADDING_SLACK = 4;
-
     private final VaultRepository vaultRepository;
-    private final VaultProperties vaultProperties;
+    private final VaultBlobCodec blobCodec;
 
-    public VaultService(VaultRepository vaultRepository, VaultProperties vaultProperties) {
+    public VaultService(VaultRepository vaultRepository, VaultBlobCodec blobCodec) {
         this.vaultRepository = vaultRepository;
-        this.vaultProperties = vaultProperties;
+        this.blobCodec = blobCodec;
     }
 
     @Transactional(readOnly = true)
     public VaultResponse getVault(UUID userId) {
         VaultEntity vault = vaultRepository.findByUserId(userId)
                 .orElseThrow(VaultNotFoundException::new);
-        return new VaultResponse(encode(vault.getBlob()), vault.getVersion(), vault.getUpdatedAt());
+        return new VaultResponse(blobCodec.encode(vault.getBlob()), vault.getVersion(), vault.getUpdatedAt());
     }
 
     @Transactional(readOnly = true)
@@ -54,12 +47,12 @@ public class VaultService {
     public String getBlobBase64(UUID userId) {
         VaultEntity vault = vaultRepository.findByUserId(userId)
                 .orElseThrow(VaultNotFoundException::new);
-        return encode(vault.getBlob());
+        return blobCodec.encode(vault.getBlob());
     }
 
     @Transactional
     public VaultUpdateResponse updateVault(UUID userId, UpdateVaultRequest request) {
-        byte[] blob = decodeAndValidate(request.vault());
+        byte[] blob = blobCodec.decodeAndValidate(request.vault());
         VaultEntity vault = vaultRepository.findAndLockByUserId(userId)
                 .orElseThrow(VaultNotFoundException::new);
 
@@ -80,7 +73,7 @@ public class VaultService {
     public void createInitialVault(UUID userId, String base64Blob) {
         vaultRepository.save(VaultEntity.builder()
                 .userId(userId)
-                .blob(decodeAndValidate(base64Blob))
+                .blob(blobCodec.decodeAndValidate(base64Blob))
                 .version(INITIAL_VERSION)
                 .updatedAt(Instant.now())
                 .build());
@@ -111,38 +104,9 @@ public class VaultService {
     private VaultEntity replaceBlob(UUID userId, String base64Blob) {
         VaultEntity vault = vaultRepository.findAndLockByUserId(userId)
                 .orElseThrow(VaultNotFoundException::new);
-        vault.setBlob(decodeAndValidate(base64Blob));
+        vault.setBlob(blobCodec.decodeAndValidate(base64Blob));
         vault.setVersion(vault.getVersion() + 1);
         vault.setUpdatedAt(Instant.now());
         return vault;
-    }
-
-    private byte[] decodeAndValidate(String base64Blob) {
-        // Reject an oversized payload from its encoded length *before* decoding, so a huge
-        // blob never gets expanded into a byte[] in memory. base64 encodes n bytes as
-        // 4 * ceil(n / 3) characters, so anything longer than that (plus padding slack)
-        // cannot fit within the byte ceiling.
-        long maxBase64Length = (long) Math.ceil(vaultProperties.maxSizeBytes() / 3.0) * 4 + BASE64_PADDING_SLACK;
-        if (base64Blob.length() > maxBase64Length) {
-            throw new VaultTooLargeException(vaultProperties.maxSizeBytes());
-        }
-
-        byte[] blob;
-        try {
-            blob = Base64.getDecoder().decode(base64Blob);
-        } catch (IllegalArgumentException ex) {
-            throw new InvalidVaultPayloadException("Vault blob is not valid base64");
-        }
-        if (blob.length == 0) {
-            throw new InvalidVaultPayloadException("Vault blob must not be empty");
-        }
-        if (blob.length > vaultProperties.maxSizeBytes()) {
-            throw new VaultTooLargeException(vaultProperties.maxSizeBytes());
-        }
-        return blob;
-    }
-
-    private String encode(byte[] blob) {
-        return Base64.getEncoder().encodeToString(blob);
     }
 }

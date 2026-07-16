@@ -18,7 +18,11 @@
         },
         {
             "name": "Users",
-            "description": "Account profile"
+            "description": "Account profile, public key and incoming project invites"
+        },
+        {
+            "name": "Projects",
+            "description": "Zero-knowledge team workspaces (server stores ciphertext + metadata only)"
         },
         {
             "name": "Vault",
@@ -132,6 +136,654 @@
                             "*/*": {
                                 "schema": {
                                     "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/users/me/public-key": {
+            "put": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Publish or rotate the account's X25519 public key",
+                "description": "Rotating (rotate=true) replaces the key and resets every wrapped key the account holds \u2014 each affected project membership re-enters the awaiting-key state.",
+                "operationId": "updatePublicKey",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdatePublicKeyRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "400": {
+                        "description": "Key is not 32 bytes"
+                    },
+                    "409": {
+                        "description": "A key already exists and rotate was not set"
+                    },
+                    "204": {
+                        "description": "Public key stored"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/vault": {
+            "get": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Fetch the project vault and the caller's wrapped DEK (any member)",
+                "operationId": "getProjectVault",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "404": {
+                        "description": "Project not found or caller is not a member",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectVaultResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectVaultResponse"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Vault returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectVaultResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "put": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Replace the project vault with optimistic concurrency (keyed member)",
+                "operationId": "updateProjectVault",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateVaultRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "403": {
+                        "description": "Caller holds no wrapped key yet",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Vault updated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Version conflict",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Vault blob too large",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/users/me/invites/{id}/decline": {
+            "post": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Decline a project invite",
+                "operationId": "declineInvite",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "404": {
+                        "description": "Invite not found or not addressed to the caller"
+                    },
+                    "204": {
+                        "description": "Invite declined"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/users/me/invites/{id}/accept": {
+            "post": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Accept a project invite, joining as an awaiting-key member",
+                "operationId": "acceptInvite",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "404": {
+                        "description": "Invite not found or not addressed to the caller",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectSummary"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectSummary"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Joined; returns the project summary",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectSummary"
+                                }
+                            }
+                        }
+                    },
+                    "410": {
+                        "description": "Invite expired",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectSummary"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects": {
+            "get": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "List the caller's projects",
+                "operationId": "listProjects",
+                "responses": {
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ProjectSummary"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Projects returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ProjectSummary"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Create a project with its initial vault and the owner's wrapped DEK",
+                "operationId": "createProject",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateProjectRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "description": "Project created",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
+                    "412": {
+                        "description": "Caller has not published a public key",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid vault or wrapped key",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/rotate": {
+            "post": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Rotate the project DEK and re-wrap it for all remaining members (admin+)",
+                "operationId": "rotateProject",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RotateProjectRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Rotated; returns the new vault version",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not an admin, or an admin removing an admin",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid removal or wrapped key",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Version conflict",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/members/{userId}/key": {
+            "post": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Seal the project DEK to a member's public key (admin+)",
+                "operationId": "submitMemberKey",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "userId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SubmitWrappedKeyRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "400": {
+                        "description": "Wrapped key is not 80 bytes"
+                    },
+                    "409": {
+                        "description": "Vault version has moved on (stale DEK)"
+                    },
+                    "403": {
+                        "description": "Caller is not an admin"
+                    },
+                    "404": {
+                        "description": "Project/caller/target member not found"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    },
+                    "204": {
+                        "description": "Key stored"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/invites": {
+            "post": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Invite an email to the project (admin+)",
+                "operationId": "createInvite",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateInviteRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "description": "Invite created",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInvite"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not an admin",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInvite"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInvite"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInvite"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Email is already a member or already invited",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInvite"
                                 }
                             }
                         }
@@ -545,13 +1197,215 @@
                 }
             }
         },
+        "/api/v1/projects/{id}": {
+            "get": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Get project detail (metadata, members, invites)",
+                "operationId": "getProject",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "404": {
+                        "description": "Project not found or caller is not a member",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "Project returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Delete a project (owner only)",
+                "operationId": "deleteProject",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Project deleted"
+                    },
+                    "403": {
+                        "description": "Caller is not the owner"
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "patch": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Update a project's name and/or description (admin+)",
+                "operationId": "updateProject",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateProjectRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Project updated"
+                    },
+                    "403": {
+                        "description": "Caller is not an admin"
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/members/{userId}": {
+            "patch": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Change a member's role (owner only; OWNER transfers ownership)",
+                "operationId": "updateMemberRole",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "userId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateMemberRoleRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "403": {
+                        "description": "Caller is not the owner"
+                    },
+                    "400": {
+                        "description": "Owner cannot demote themselves without a transfer"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    },
+                    "204": {
+                        "description": "Role updated"
+                    },
+                    "404": {
+                        "description": "Project or target member not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/api/v1/users/me": {
             "get": {
                 "tags": [
                     "Users"
                 ],
                 "summary": "Get the authenticated account's profile",
-                "description": "Includes hasPassword / hasRecovery / hasVault flags the frontend uses to route the account.",
+                "description": "Includes hasPassword / hasRecovery / hasVault flags and the account's public key.",
                 "operationId": "getCurrentUser",
                 "responses": {
                     "200": {
@@ -570,6 +1424,127 @@
                             "*/*": {
                                 "schema": {
                                     "$ref": "#/components/schemas/UserProfile"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/users/me/invites": {
+            "get": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "List unexpired project invites addressed to the caller",
+                "operationId": "getMyInvites",
+                "responses": {
+                    "200": {
+                        "description": "Invites returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/MyInvite"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/MyInvite"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/pending-keys": {
+            "get": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "List members awaiting a key who have published a public key (admin+)",
+                "operationId": "getPendingKeys",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Pending keys returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingKey"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not an admin",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingKey"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingKey"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingKey"
+                                    }
                                 }
                             }
                         }
@@ -673,6 +1648,93 @@
                     }
                 }
             }
+        },
+        "/api/v1/projects/{id}/members/me": {
+            "delete": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Leave a project (the owner must transfer ownership first)",
+                "operationId": "leaveProject",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "404": {
+                        "description": "Project not found or caller is not a member"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    },
+                    "409": {
+                        "description": "Owner cannot leave without transferring ownership"
+                    },
+                    "204": {
+                        "description": "Left the project"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/projects/{id}/invites/{inviteId}": {
+            "delete": {
+                "tags": [
+                    "Projects"
+                ],
+                "summary": "Revoke a pending invite (admin+)",
+                "operationId": "deleteInvite",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "inviteId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Invite revoked"
+                    },
+                    "403": {
+                        "description": "Caller is not an admin"
+                    },
+                    "401": {
+                        "description": "Not authenticated"
+                    },
+                    "404": {
+                        "description": "Project or invite not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
         }
     },
     "components": {
@@ -710,6 +1772,278 @@
                     }
                 },
                 "description": "The new version after a successful vault write"
+            },
+            "UpdatePublicKeyRequest": {
+                "required": [
+                    "publicKey"
+                ],
+                "type": "object",
+                "properties": {
+                    "publicKey": {
+                        "type": "string",
+                        "description": "Base64-encoded X25519 public key (exactly 32 bytes)"
+                    },
+                    "rotate": {
+                        "type": "boolean",
+                        "description": "When true, replace an existing key and reset every wrapped key the account holds (each affected project membership re-enters the awaiting-key state)"
+                    }
+                },
+                "description": "Publish or rotate the account's X25519 public key"
+            },
+            "ProjectSummary": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "The calling member's role in this project",
+                        "enum": [
+                            "MEMBER",
+                            "ADMIN",
+                            "OWNER"
+                        ]
+                    },
+                    "memberCount": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "pendingInviteCount": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "vaultVersion": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "awaitingKey": {
+                        "type": "boolean",
+                        "description": "True when the caller holds no wrapped key yet (awaiting an admin to seal the DEK)"
+                    }
+                },
+                "description": "A project as it appears in the caller's project list"
+            },
+            "CreateProjectRequest": {
+                "required": [
+                    "name",
+                    "vault",
+                    "wrappedDek"
+                ],
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "maxLength": 100,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Human-readable project name"
+                    },
+                    "description": {
+                        "maxLength": 500,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Optional project description"
+                    },
+                    "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext project vault blob"
+                    },
+                    "wrappedDek": {
+                        "type": "string",
+                        "description": "Base64-encoded project DEK sealed to the owner's public key (exactly 80 bytes)"
+                    }
+                },
+                "description": "Create a project with its initial encrypted vault and the owner's wrapped DEK"
+            },
+            "Project": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "The calling member's role in this project",
+                        "enum": [
+                            "MEMBER",
+                            "ADMIN",
+                            "OWNER"
+                        ]
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "vaultVersion": {
+                        "type": "integer",
+                        "description": "Current project vault version",
+                        "format": "int64"
+                    },
+                    "members": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ProjectMember"
+                        }
+                    },
+                    "invites": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ProjectInvite"
+                        }
+                    }
+                },
+                "description": "Full project detail: metadata, members and pending invites"
+            },
+            "ProjectInvite": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "expiresAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "description": "A pending invite on a project"
+            },
+            "ProjectMember": {
+                "type": "object",
+                "properties": {
+                    "userId": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "MEMBER",
+                            "ADMIN",
+                            "OWNER"
+                        ]
+                    },
+                    "keyed": {
+                        "type": "boolean",
+                        "description": "Whether the DEK has been sealed to this member's public key"
+                    },
+                    "publicKey": {
+                        "type": "string",
+                        "description": "The member's base64 X25519 public key, or null if they have not published one"
+                    }
+                },
+                "description": "A member of a project"
+            },
+            "RotateProjectRequest": {
+                "required": [
+                    "vault",
+                    "wrappedKeys"
+                ],
+                "type": "object",
+                "properties": {
+                    "removeUserId": {
+                        "type": "string",
+                        "description": "Optional member to remove as part of the rotation",
+                        "format": "uuid"
+                    },
+                    "vault": {
+                        "maxLength": 1400000,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext project vault blob, re-encrypted under the new DEK"
+                    },
+                    "expectedVersion": {
+                        "type": "integer",
+                        "description": "The version the client last saw; the rotation is rejected (409) if it has moved on",
+                        "format": "int64"
+                    },
+                    "wrappedKeys": {
+                        "type": "array",
+                        "description": "The new DEK wrapped once per remaining member",
+                        "items": {
+                            "$ref": "#/components/schemas/WrappedKeyEntry"
+                        }
+                    }
+                },
+                "description": "Rotate the project DEK and re-wrap it for all remaining members"
+            },
+            "WrappedKeyEntry": {
+                "required": [
+                    "userId",
+                    "wrappedDek"
+                ],
+                "type": "object",
+                "properties": {
+                    "userId": {
+                        "type": "string",
+                        "description": "The member the key is wrapped for",
+                        "format": "uuid"
+                    },
+                    "wrappedDek": {
+                        "type": "string",
+                        "description": "Base64-encoded DEK sealed to that member's public key (exactly 80 bytes)"
+                    }
+                },
+                "description": "A member's copy of the new DEK, sealed to their public key"
+            },
+            "SubmitWrappedKeyRequest": {
+                "required": [
+                    "wrappedDek"
+                ],
+                "type": "object",
+                "properties": {
+                    "wrappedDek": {
+                        "type": "string",
+                        "description": "Base64-encoded project DEK sealed to the target member's public key (exactly 80 bytes)"
+                    },
+                    "vaultVersion": {
+                        "type": "integer",
+                        "description": "The project vault version the DEK was wrapped against; rejected (409) if the vault has since rotated, so a stale DEK is never accepted",
+                        "format": "int64"
+                    }
+                },
+                "description": "Seal the project DEK to a member's public key"
+            },
+            "CreateInviteRequest": {
+                "required": [
+                    "email"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "maxLength": 320,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "Email address to invite (lowercased server-side)"
+                    }
+                },
+                "description": "Invite an email address to a project"
             },
             "DeviceCodeResponse": {
                 "type": "object",
@@ -1020,6 +2354,42 @@
                     }
                 }
             },
+            "UpdateProjectRequest": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "maxLength": 100,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "New name, or null to leave unchanged"
+                    },
+                    "description": {
+                        "maxLength": 500,
+                        "minLength": 0,
+                        "type": "string",
+                        "description": "New description, or null to leave unchanged"
+                    }
+                },
+                "description": "Patch a project's name and/or description"
+            },
+            "UpdateMemberRoleRequest": {
+                "required": [
+                    "role"
+                ],
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "description": "The new role. Setting a member to OWNER transfers ownership and demotes the current owner to ADMIN.",
+                        "enum": [
+                            "MEMBER",
+                            "ADMIN",
+                            "OWNER"
+                        ]
+                    }
+                },
+                "description": "Change a member's role"
+            },
             "VaultResponse": {
                 "type": "object",
                 "properties": {
@@ -1063,9 +2433,80 @@
                     "hasVault": {
                         "type": "boolean",
                         "description": "Whether an encrypted vault exists for this account"
+                    },
+                    "publicKey": {
+                        "type": "string",
+                        "description": "The account's base64 X25519 public key, or null if none is published yet"
                     }
                 },
                 "description": "The authenticated account's profile plus routing capability flags"
+            },
+            "MyInvite": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "projectId": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "projectName": {
+                        "type": "string"
+                    },
+                    "invitedByEmail": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "expiresAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "description": "An invite addressed to the calling account"
+            },
+            "ProjectVaultResponse": {
+                "type": "object",
+                "properties": {
+                    "vault": {
+                        "type": "string",
+                        "description": "Base64-encoded ciphertext project vault blob"
+                    },
+                    "version": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "updatedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "wrappedDek": {
+                        "type": "string",
+                        "description": "The caller's base64 wrapped DEK, or null if they are still awaiting a key"
+                    }
+                },
+                "description": "The project's ciphertext vault plus the caller's wrapped DEK"
+            },
+            "PendingKey": {
+                "type": "object",
+                "properties": {
+                    "userId": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "email": {
+                        "type": "string"
+                    },
+                    "publicKey": {
+                        "type": "string",
+                        "description": "The member's base64 X25519 public key to seal the DEK against"
+                    }
+                },
+                "description": "A member awaiting a wrapped key who has published a public key to seal against"
             },
             "OAuthProvidersResponse": {
                 "type": "object",

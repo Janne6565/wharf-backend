@@ -26,6 +26,9 @@ public record UserProfileResponse(
         boolean hasRecovery,
 
         @Schema(description = "Whether an encrypted vault exists for this account")
-        boolean hasVault
+        boolean hasVault,
+
+        @Schema(description = "The account's base64 X25519 public key, or null if none is published yet")
+        String publicKey
 ) {
 }

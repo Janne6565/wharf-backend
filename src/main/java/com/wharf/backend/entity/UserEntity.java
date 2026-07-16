@@ -55,6 +55,17 @@ public class UserEntity {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /**
+     * The account's published X25519 public key (exactly 32 bytes), or {@code null} until
+     * the user publishes one. Project DEKs are sealed against this key; the server only ever
+     * stores and hands it out, never derives from it.
+     */
+    @Column(name = "public_key")
+    private byte[] publicKey;
+
+    @Column(name = "public_key_updated_at")
+    private Instant publicKeyUpdatedAt;
+
     /** JPA optimistic-lock version — guards against lost updates on concurrent account writes. */
     @Version
     @Column(name = "version", nullable = false)
