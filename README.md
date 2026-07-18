@@ -37,6 +37,15 @@ Server-side hardening:
   Resetting rotates the recovery code (invalidating the old one), re-encrypts the vault,
   and **revokes all existing sessions** by bumping the account's `tokenVersion`.
 
+Threat-model note — vault contents: clients may opt-in sync **secrets** inside the
+personal vault payload, currently per-host login passwords and (document schema 3,
+2026-07-19) **SSH private keys** (keyfile bytes stored verbatim, so a
+passphrase-protected key stays protected even inside the vault). The server's
+guarantees are unchanged — it stores only the opaque ciphertext — but compromise of a
+user's master password or recovery code consequently yields those synced secrets too.
+Keys are never written into project vaults; sharing them is not expressible in the
+protocol.
+
 ---
 
 ## Projects crypto contract
