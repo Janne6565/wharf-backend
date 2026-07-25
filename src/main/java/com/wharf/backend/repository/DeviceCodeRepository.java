@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,4 +29,7 @@ public interface DeviceCodeRepository extends JpaRepository<DeviceCodeEntity, UU
     @Modifying
     @Query("delete from DeviceCodeEntity d where d.userId = :userId and d.usedAt is null")
     void deleteUnusedByUserId(@Param("userId") UUID userId);
+
+    /** Every pairing code ever issued to an account, used and unused — dropped on deletion. */
+    List<DeviceCodeEntity> findByUserId(UUID userId);
 }

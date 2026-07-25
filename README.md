@@ -36,6 +36,12 @@ Server-side hardening:
 - **Recovery has no backdoor.** The only password-reset path is a valid recovery code.
   Resetting rotates the recovery code (invalidating the old one), re-encrypts the vault,
   and **revokes all existing sessions** by bumping the account's `tokenVersion`.
+- **Account deletion is irreversible — by construction, not by policy.** The server holds
+  only ciphertext and bcrypt hashes, so there is nothing it *could* restore: deleting an
+  account destroys the only copies of its vault blob and of every project vault it owns,
+  and no support path, backup or admin override can bring the plaintext back (nobody ever
+  had it). Deletion is therefore re-authenticated rather than session-only — see
+  [Account deletion](#account-deletion).
 - **An email address must be proven before it grants anything.** Registration issues no
   tokens; a bcrypt-hashed, 15-minute, 5-attempt 6-digit code does (see
   [Email verification](#email-verification)). This closes invite hijack: project invites are
@@ -122,6 +128,8 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 | Method & path | Body | Result |
 |---------------|------|--------|
 | `GET /users/me` | — | `{id, email, createdAt, hasPassword, hasRecovery, hasVault}` — the three booleans let the frontend route an OAuth account that has not set a master password / recovery / vault yet |
+| `DELETE /users/me` | `{authKey?}` | `204` — **irreversibly** deletes the account and everything keyed to it, **including every project it owns** (see [Account deletion](#account-deletion)). Re-authenticated: `authKey` is **required** if the account has a password (`401` if it does not match, `400 code=auth_key_required` if omitted); an OAuth-only account may send no body at all |
+| `GET /users/me/deletion-preview` | — | `{ownedProjects:[{id, name, otherMemberCount}], otherMemberships}` — read-only; what a `DELETE /users/me` would destroy, so the UI can warn precisely |
 | `POST /auth/setup` | `{recoveryAuthKey, vault, authKey?}` | `204` — one-time onboarding for an OAuth-created account: **atomically** sets the recovery key, the initial vault and (optionally) a password auth key. `409` if a recovery key or vault already exists, or if `authKey` is supplied while a password is already set (rotation stays exclusive to recover/reset) |
 | `POST /auth/password` | `{currentAuthKey, newAuthKey, vault}` | `{version, updatedAt}` — authenticated master-password change: verifies `currentAuthKey`, replaces the auth-key hash with one derived from the new password and stores the re-encrypted `vault` (bumping its version). The recovery code is untouched, and existing sessions stay valid (device pairings are independent of the password). `401` if `currentAuthKey` is wrong; `409` if no password is set yet (use `/auth/setup`) |
 | `POST /device-codes` | — | `{code, expiresAt}` — 8-char code (no `0/O/1/I`), TTL 10 min; issuing invalidates the caller's previous unused codes |
@@ -130,8 +138,8 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 
 All errors are RFC 7807 `application/problem+json`. Errors clients must branch on carry a
 stable machine-readable `code` property alongside the human-readable `detail`
-(`email_not_verified`, `invalid_verification_code`, `unverified_account_conflict`) — match on
-`code`, never on `detail`.
+(`email_not_verified`, `invalid_verification_code`, `unverified_account_conflict`,
+`auth_key_required`) — match on `code`, never on `detail`.
 
 ### Projects (team workspaces)
 
@@ -233,6 +241,35 @@ email string. So:
   linking would let them co-inhabit it.
 - Existing accounts were backfilled as verified by the `V6` migration; the column default
   flips to `false` for everything created afterwards.
+
+### Account deletion
+
+`DELETE /api/v1/users/me` erases the account for good. The account is always taken from the
+authenticated principal — never from the body — so the endpoint cannot be aimed at anyone
+else.
+
+- **Re-authentication, not just a session.** An account that has a master password must send
+  `{authKey}` and it must match (`401` otherwise); omitting it is `400 code=auth_key_required`.
+  A stolen access token or an unattended session must not be enough to destroy an account.
+  An **OAuth-only** account (no `authKeyHash`) has no password to re-prove and no other
+  second factor available, so the valid session alone is accepted there.
+- **Owned projects are deleted outright — including projects with other members.** This is a
+  deliberate product decision (an owner leaving without transferring ownership would strand
+  an unadministrable project), and it is destructive to third parties, so it is logged at
+  INFO with the account id, the number of projects destroyed and the number of other members
+  who lost access. Projects the caller is only a *member* of survive; only their membership
+  row is removed. Call `GET /api/v1/users/me/deletion-preview` first to show the user exactly
+  what they are about to take down.
+- **One transaction, all-or-nothing.** Members, invites, project vaults, the projects, the
+  caller's other memberships, invites addressed to their address, OAuth identities, device
+  codes and the personal vault are removed explicitly and in foreign-key order, then the user
+  row last (`email_verifications` is left to its `ON DELETE CASCADE`). A failure anywhere —
+  including a rejected `authKey` — leaves the account completely intact.
+- Deleting **frees the email address for re-registration**; the new account is an ordinary
+  fresh, unverified one and inherits nothing (invites addressed to the address are cleared
+  with the old account).
+- There is **no undo and no recovery window**: see the [zero-knowledge contract](#zero-knowledge-crypto-contract)
+  — the server never held anything but ciphertext.
 
 ### JWT model
 
@@ -412,4 +449,6 @@ mvn verify
 Unit tests (Mockito + AssertJ) cover the auth, vault and device-code services; a MockMvc
 `@SpringBootTest` integration test drives the full flow against a Flyway-migrated H2
 schema: register → login → device code issue/exchange → vault get/put (with version
-conflict) → recovery verify/reset → old tokens rejected.
+conflict) → recovery verify/reset → old tokens rejected. Further integration tests cover the
+email-verification flow, the team-project flow and account deletion (including that a wrong
+`authKey` rolls the whole thing back and that the address is freed for re-registration).

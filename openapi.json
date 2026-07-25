@@ -13,12 +13,12 @@
     ],
     "tags": [
         {
-            "name": "OAuth",
-            "description": "Google / GitHub social login (links an external identity, then issues the app's own JWTs)"
-        },
-        {
             "name": "Users",
             "description": "Account profile, public key and incoming project invites"
+        },
+        {
+            "name": "OAuth",
+            "description": "Google / GitHub social login (links an external identity, then issues the app's own JWTs)"
         },
         {
             "name": "Projects",
@@ -1521,6 +1521,39 @@
                         "bearerAuth": []
                     }
                 ]
+            },
+            "delete": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Irreversibly delete the authenticated account and everything it owns",
+                "description": "Deletes the account, its personal vault, its OAuth links and device codes, its memberships, and \u2014 outright \u2014 every project it owns, including projects that still have other members (they lose access). All in one transaction: it either all happens or none of it does. There is no undo and no server-side copy to restore from: the server only ever held ciphertext. Because this destroys data for other people too, it is re-authenticated: an account with a master password must supply its current authKey. An OAuth-only account has no password to prove and may omit the body. Use /users/me/deletion-preview first to show the caller exactly what will be lost.",
+                "operationId": "deleteAccount",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/DeleteAccountRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "401": {
+                        "description": "Not authenticated, or the supplied authKey does not match"
+                    },
+                    "400": {
+                        "description": "The account has a password but no authKey was supplied (code: auth_key_required)"
+                    },
+                    "204": {
+                        "description": "Account deleted"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
             }
         },
         "/api/v1/users/me/invites": {
@@ -1553,6 +1586,43 @@
                                     "items": {
                                         "$ref": "#/components/schemas/MyInvite"
                                     }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/users/me/deletion-preview": {
+            "get": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Preview what deleting the account would destroy",
+                "description": "Read-only. Lists the projects the caller owns (each deleted with the account, together with the number of other members who would lose access) and how many further projects the caller is only a member of (those survive; only the membership is removed).",
+                "operationId": "getAccountDeletionPreview",
+                "responses": {
+                    "200": {
+                        "description": "Preview returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccountDeletionPreview"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccountDeletionPreview"
                                 }
                             }
                         }
@@ -2618,6 +2688,42 @@
                 },
                 "description": "An invite addressed to the calling account"
             },
+            "AccountDeletionPreview": {
+                "type": "object",
+                "properties": {
+                    "ownedProjects": {
+                        "type": "array",
+                        "description": "Projects owned by the caller \u2014 each is deleted along with the account",
+                        "items": {
+                            "$ref": "#/components/schemas/OwnedProjectImpact"
+                        }
+                    },
+                    "otherMemberships": {
+                        "type": "integer",
+                        "description": "Number of projects the caller is only a member of; those projects survive and only the caller's membership is removed",
+                        "format": "int32"
+                    }
+                },
+                "description": "The collateral of deleting the calling account: the projects it owns (which are deleted outright, including for their other members) and the memberships it merely holds elsewhere."
+            },
+            "OwnedProjectImpact": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "otherMemberCount": {
+                        "type": "integer",
+                        "description": "Members other than the caller who would lose access when this project is deleted",
+                        "format": "int32"
+                    }
+                },
+                "description": "An owned project that would be deleted with the account"
+            },
             "ProjectVaultResponse": {
                 "type": "object",
                 "properties": {
@@ -2670,6 +2776,16 @@
                     }
                 },
                 "description": "The OAuth providers that are currently enabled (configured with a client id + secret)"
+            },
+            "DeleteAccountRequest": {
+                "type": "object",
+                "properties": {
+                    "authKey": {
+                        "type": "string",
+                        "description": "The current base64 authentication key. Required if the account has a password; null/absent is only accepted for an OAuth-only account."
+                    }
+                },
+                "description": "Re-authentication for irreversible account deletion. Required for accounts that have a master password; may be omitted by OAuth-only accounts, which have no password to prove."
             }
         },
         "securitySchemes": {
