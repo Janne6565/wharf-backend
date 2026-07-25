@@ -89,7 +89,8 @@ class OAuthEndpointsIntegrationTest {
                 .put("vault", base64("vault-v1")));
         mockMvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON).content(registerBody))
-                .andExpect(status().isCreated());
+                .andExpect(status().isAccepted());
+        markVerified(email);
 
         String loginBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
                 .put("email", email).put("authKey", "auth-key").put("tokenMode", "DIRECT"));
@@ -209,8 +210,17 @@ class OAuthEndpointsIntegrationTest {
                 .email(email)
                 .authKeyHash(null)
                 .recoveryKeyHash(null)
+                // OAuth proved the address, so such an account starts verified.
+                .emailVerified(true)
                 .tokenVersion(0)
                 .createdAt(Instant.now())
                 .build());
+    }
+
+    /** Registration leaves the account unverified; these flows start from a usable one. */
+    private void markVerified(String email) {
+        UserEntity user = userRepository.findByEmail(email).orElseThrow();
+        user.setEmailVerified(true);
+        userRepository.saveAndFlush(user);
     }
 }

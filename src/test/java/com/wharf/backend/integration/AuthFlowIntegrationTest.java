@@ -3,6 +3,8 @@ package com.wharf.backend.integration;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wharf.backend.configuration.Profiles;
+import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -25,8 +27,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * End-to-end happy path plus the key failure branches, driven through the real filter
  * chain and Flyway-migrated H2 schema:
- * register -> login -> device code issue/exchange -> vault get/put (+ conflict) ->
- * recovery verify/reset -> old tokens rejected.
+ * register -> verify email -> login -> device code issue/exchange -> vault get/put
+ * (+ conflict) -> recovery verify/reset -> old tokens rejected.
+ *
+ * <p>The email-verification step itself (codes, attempts, resend) has its own end-to-end
+ * test; here the address is marked verified directly so these flows stay about what they
+ * are testing.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -38,6 +44,9 @@ class AuthFlowIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private UserRepository userRepository;
 
     private static final String EMAIL = "deniz@acme.io";
     private static final String AUTH_KEY = "auth-key-v1-base64==";
@@ -52,6 +61,13 @@ class AuthFlowIntegrationTest {
         return objectMapper.readTree(result.getResponse().getContentAsString());
     }
 
+    /** Shortcut past the code challenge — the flow under test starts at a usable account. */
+    private void markVerified(String email) {
+        UserEntity user = userRepository.findByEmail(email).orElseThrow();
+        user.setEmailVerified(true);
+        userRepository.saveAndFlush(user);
+    }
+
     @Test
     void fullAccountLifecycle() throws Exception {
         // 1. Register
@@ -62,17 +78,13 @@ class AuthFlowIntegrationTest {
                 .put("vault", base64("vault-v1")));
         MvcResult registered = mockMvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON).content(registerBody))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andReturn();
-        assertThat(json(registered).path("user").path("email").asText()).isEqualTo(EMAIL);
-        // Register defaults to COOKIE mode: the refresh token is set as an httpOnly cookie
-        // and must be omitted from the body so the browser never holds it in JS-readable state.
-        assertThat(registered.getResponse().getHeaders(HttpHeaders.SET_COOKIE))
-                .anyMatch(header -> header.startsWith(REFRESH_COOKIE_NAME + "=")
-                        && header.contains("HttpOnly"));
-        assertThat(json(registered).path("tokens").path("accessToken").asText()).isNotBlank();
-        JsonNode registerRefresh = json(registered).path("tokens").path("refreshToken");
-        assertThat(registerRefresh.isNull() || registerRefresh.isMissingNode()).isTrue();
+        assertThat(json(registered).path("email").asText()).isEqualTo(EMAIL);
+        assertThat(json(registered).path("verificationRequired").asBoolean()).isTrue();
+        // Registration hands out nothing usable: no session cookie, no tokens.
+        assertThat(registered.getResponse().getHeaders(HttpHeaders.SET_COOKIE)).isEmpty();
+        assertThat(json(registered).path("tokens").isMissingNode()).isTrue();
 
         // Duplicate registration is rejected
         mockMvc.perform(post("/api/v1/auth/register")
@@ -82,6 +94,12 @@ class AuthFlowIntegrationTest {
         // 2. Login (DIRECT so we get the tokens in the body)
         String loginBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
                 .put("email", EMAIL).put("authKey", AUTH_KEY).put("tokenMode", "DIRECT"));
+
+        // Until the address is verified, even the right key gets no session.
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON).content(loginBody))
+                .andExpect(status().isForbidden());
+        markVerified(EMAIL);
         MvcResult loggedIn = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON).content(loginBody))
                 .andExpect(status().isOk())
@@ -198,18 +216,25 @@ class AuthFlowIntegrationTest {
         String oldKey = "old-auth-key-base64==";
         String newKey = "new-auth-key-base64==";
 
-        // Register (DIRECT so we hold the tokens) and log in.
+        // Register, verify, then log in (DIRECT so we hold the tokens).
         String registerBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
                 .put("email", email)
                 .put("authKey", oldKey)
                 .put("recoveryAuthKey", "recovery-key-base64==")
                 .put("vault", base64("vault-v1"))
                 .put("tokenMode", "DIRECT"));
-        MvcResult registered = mockMvc.perform(post("/api/v1/auth/register")
+        mockMvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON).content(registerBody))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted());
+        markVerified(email);
+
+        MvcResult loggedIn = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                                .put("email", email).put("authKey", oldKey).put("tokenMode", "DIRECT"))))
+                .andExpect(status().isOk())
                 .andReturn();
-        String accessToken = json(registered).path("tokens").path("accessToken").asText();
+        String accessToken = json(loggedIn).path("accessToken").asText();
         assertThat(accessToken).isNotBlank();
 
         // Unauthenticated change-password is rejected.

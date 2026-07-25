@@ -49,6 +49,14 @@ public class UserEntity {
     @Column(name = "recovery_key_hash")
     private String recoveryKeyHash;
 
+    /**
+     * Whether the account has proven control of {@link #email} with a one-time code.
+     * No token is ever issued for an unverified account — an unproven address would be
+     * enough to claim a project invite addressed to it.
+     */
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified;
+
     @Column(name = "token_version", nullable = false)
     private int tokenVersion;
 

@@ -883,6 +883,48 @@
                 }
             }
         },
+        "/api/v1/auth/verify-email": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Complete registration with the emailed 6-digit code",
+                "description": "Marks the address verified and issues a full session, exactly like login: in COOKIE mode the refresh token is set as an httpOnly cookie, in DIRECT mode it is returned in the body. The code expires after 15 minutes and dies after 5 failed attempts (ask for a resend). Every failure returns the same generic 400 so the endpoint is not an oracle.",
+                "operationId": "verifyEmail",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VerifyEmailRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Email verified; session issued",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Code is wrong, expired, missing or out of attempts (code: invalid_verification_code)",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/setup": {
             "post": {
                 "tags": [
@@ -922,13 +964,38 @@
                 ]
             }
         },
+        "/api/v1/auth/resend-verification": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Re-send the email verification code",
+                "description": "Always 202 with no body, whether or not the address belongs to an unverified account, so it cannot be used to probe which emails are registered. Subject to a 60-second per-account cooldown, which is likewise silent.",
+                "operationId": "resendVerification",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ResendVerificationRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "description": "Request accepted"
+                    }
+                }
+            }
+        },
         "/api/v1/auth/register": {
             "post": {
                 "tags": [
                     "Authentication"
                 ],
-                "summary": "Create a new zero-knowledge account",
-                "description": "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.",
+                "summary": "Create a new zero-knowledge account and send a verification code",
+                "description": "Creates the account and emails a 6-digit code. No tokens are issued and no cookie is set: the account is unusable until the code is submitted to /auth/verify-email, which is what returns the session.",
                 "operationId": "register",
                 "requestBody": {
                     "content": {
@@ -941,22 +1008,22 @@
                     "required": true
                 },
                 "responses": {
+                    "202": {
+                        "description": "Account created; verification code sent",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RegistrationResponse"
+                                }
+                            }
+                        }
+                    },
                     "409": {
                         "description": "Email already registered",
                         "content": {
                             "*/*": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/AuthResponse"
-                                }
-                            }
-                        }
-                    },
-                    "201": {
-                        "description": "Account created",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/AuthResponse"
+                                    "$ref": "#/components/schemas/RegistrationResponse"
                                 }
                             }
                         }
@@ -982,6 +1049,16 @@
                     }
                 },
                 "responses": {
+                    "403": {
+                        "description": "Email address is not verified (code: email_not_verified)",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccessTokenResponse"
+                                }
+                            }
+                        }
+                    },
                     "200": {
                         "description": "New access token issued",
                         "content": {
@@ -1174,6 +1251,16 @@
                     "required": true
                 },
                 "responses": {
+                    "403": {
+                        "description": "Email address is not verified (code: email_not_verified)",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    },
                     "200": {
                         "description": "Authenticated",
                         "content": {
@@ -2123,6 +2210,32 @@
                 },
                 "description": "Public profile of an account"
             },
+            "VerifyEmailRequest": {
+                "required": [
+                    "code",
+                    "email"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "code": {
+                        "pattern": "\\d{6}",
+                        "type": "string",
+                        "description": "The 6-digit code from the verification email"
+                    },
+                    "tokenMode": {
+                        "type": "string",
+                        "description": "Token delivery mode; defaults to COOKIE for browsers",
+                        "enum": [
+                            "COOKIE",
+                            "DIRECT"
+                        ]
+                    }
+                },
+                "description": "Complete registration with the emailed 6-digit code"
+            },
             "AccountSetupRequest": {
                 "required": [
                     "recoveryAuthKey",
@@ -2147,6 +2260,18 @@
                     }
                 },
                 "description": "One-time onboarding for an account created via OAuth: atomically sets the recovery key, the initial encrypted vault, and (optionally) the password auth key derived from the same master password the vault was encrypted with"
+            },
+            "ResendVerificationRequest": {
+                "required": [
+                    "email"
+                ],
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    }
+                },
+                "description": "Ask for a fresh verification code. The response is always 202, whether or not the address belongs to an account, so it cannot be used to probe registrations."
             },
             "RegisterRequest": {
                 "required": [
@@ -2185,32 +2310,19 @@
                 },
                 "description": "Create a new zero-knowledge account"
             },
-            "AuthResponse": {
+            "RegistrationResponse": {
                 "type": "object",
                 "properties": {
-                    "user": {
-                        "$ref": "#/components/schemas/User"
+                    "email": {
+                        "type": "string",
+                        "description": "The normalized address the verification code was sent to"
                     },
-                    "tokens": {
-                        "$ref": "#/components/schemas/TokenPair"
+                    "verificationRequired": {
+                        "type": "boolean",
+                        "description": "Always true today; present so the client branches on data rather than on the status code"
                     }
                 },
-                "description": "The account plus a new token pair (register / recovery reset). In COOKIE mode the refresh token is set as an httpOnly cookie and omitted from the pair."
-            },
-            "TokenPair": {
-                "type": "object",
-                "properties": {
-                    "accessToken": {
-                        "type": "string",
-                        "description": "Short-lived identity (access) token; send as Bearer"
-                    },
-                    "refreshToken": {
-                        "type": "string",
-                        "description": "Long-lived refresh token; present only in DIRECT mode (in COOKIE mode it is set as an httpOnly cookie and omitted here)",
-                        "nullable": true
-                    }
-                },
-                "description": "A freshly issued identity + refresh token pair"
+                "description": "The account was created but is not usable yet: no tokens are issued and no cookie is set until the emailed 6-digit code is submitted to /auth/verify-email."
             },
             "RefreshRequest": {
                 "type": "object",
@@ -2314,6 +2426,33 @@
                     }
                 },
                 "description": "Re-encrypt the vault under a new password and rotate the recovery code"
+            },
+            "AuthResponse": {
+                "type": "object",
+                "properties": {
+                    "user": {
+                        "$ref": "#/components/schemas/User"
+                    },
+                    "tokens": {
+                        "$ref": "#/components/schemas/TokenPair"
+                    }
+                },
+                "description": "The account plus a new token pair (register / recovery reset). In COOKIE mode the refresh token is set as an httpOnly cookie and omitted from the pair."
+            },
+            "TokenPair": {
+                "type": "object",
+                "properties": {
+                    "accessToken": {
+                        "type": "string",
+                        "description": "Short-lived identity (access) token; send as Bearer"
+                    },
+                    "refreshToken": {
+                        "type": "string",
+                        "description": "Long-lived refresh token; present only in DIRECT mode (in COOKIE mode it is set as an httpOnly cookie and omitted here)",
+                        "nullable": true
+                    }
+                },
+                "description": "A freshly issued identity + refresh token pair"
             },
             "ChangePasswordRequest": {
                 "required": [

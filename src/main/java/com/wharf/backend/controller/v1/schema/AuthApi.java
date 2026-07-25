@@ -9,9 +9,12 @@ import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
 import com.wharf.backend.model.action.RegisterRequest;
+import com.wharf.backend.model.action.ResendVerificationRequest;
+import com.wharf.backend.model.action.VerifyEmailRequest;
 import com.wharf.backend.model.core.AccessTokenResponse;
 import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
+import com.wharf.backend.model.core.RegistrationResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.core.VaultUpdateResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,12 +36,34 @@ public interface AuthApi {
 
     @PostMapping("/register")
     @Operation(operationId = "register",
-            summary = "Create a new zero-knowledge account",
-            description = "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.")
-    @ApiResponse(responseCode = "201", description = "Account created")
+            summary = "Create a new zero-knowledge account and send a verification code",
+            description = "Creates the account and emails a 6-digit code. No tokens are issued and no cookie is "
+                    + "set: the account is unusable until the code is submitted to /auth/verify-email, which is "
+                    + "what returns the session.")
+    @ApiResponse(responseCode = "202", description = "Account created; verification code sent")
     @ApiResponse(responseCode = "409", description = "Email already registered")
-    ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request,
-                                          HttpServletResponse response);
+    ResponseEntity<RegistrationResponse> register(@Valid @RequestBody RegisterRequest request);
+
+    @PostMapping("/verify-email")
+    @Operation(operationId = "verifyEmail",
+            summary = "Complete registration with the emailed 6-digit code",
+            description = "Marks the address verified and issues a full session, exactly like login: in COOKIE "
+                    + "mode the refresh token is set as an httpOnly cookie, in DIRECT mode it is returned in the "
+                    + "body. The code expires after 15 minutes and dies after 5 failed attempts (ask for a "
+                    + "resend). Every failure returns the same generic 400 so the endpoint is not an oracle.")
+    @ApiResponse(responseCode = "200", description = "Email verified; session issued")
+    @ApiResponse(responseCode = "400", description = "Code is wrong, expired, missing or out of attempts (code: invalid_verification_code)")
+    ResponseEntity<SessionResponse> verifyEmail(@Valid @RequestBody VerifyEmailRequest request,
+                                                HttpServletResponse response);
+
+    @PostMapping("/resend-verification")
+    @Operation(operationId = "resendVerification",
+            summary = "Re-send the email verification code",
+            description = "Always 202 with no body, whether or not the address belongs to an unverified account, "
+                    + "so it cannot be used to probe which emails are registered. Subject to a 60-second "
+                    + "per-account cooldown, which is likewise silent.")
+    @ApiResponse(responseCode = "202", description = "Request accepted")
+    ResponseEntity<Void> resendVerification(@Valid @RequestBody ResendVerificationRequest request);
 
     @PostMapping("/login")
     @Operation(operationId = "login",
@@ -46,6 +71,7 @@ public interface AuthApi {
             description = "In COOKIE mode the refresh token is set as an httpOnly cookie; in DIRECT mode it is returned in the body.")
     @ApiResponse(responseCode = "200", description = "Authenticated")
     @ApiResponse(responseCode = "401", description = "Invalid credentials")
+    @ApiResponse(responseCode = "403", description = "Email address is not verified (code: email_not_verified)")
     ResponseEntity<SessionResponse> login(@Valid @RequestBody LoginRequest request,
                                           HttpServletResponse response);
 
@@ -55,6 +81,7 @@ public interface AuthApi {
             description = "Reads the refresh token from the httpOnly cookie when present, otherwise from the body.")
     @ApiResponse(responseCode = "200", description = "New access token issued")
     @ApiResponse(responseCode = "401", description = "Missing, invalid or revoked refresh token")
+    @ApiResponse(responseCode = "403", description = "Email address is not verified (code: email_not_verified)")
     ResponseEntity<AccessTokenResponse> refresh(@RequestBody(required = false) RefreshRequest request,
                                                 HttpServletRequest httpRequest,
                                                 HttpServletResponse response);

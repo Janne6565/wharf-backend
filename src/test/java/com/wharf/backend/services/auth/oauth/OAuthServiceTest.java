@@ -6,6 +6,7 @@ import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.core.DeviceCodeResponse;
 import com.wharf.backend.model.core.OAuthClient;
 import com.wharf.backend.model.core.OAuthProvider;
+import com.wharf.backend.model.exception.UnverifiedAccountConflictException;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.services.devicecode.DeviceCodeService;
 import org.junit.jupiter.api.BeforeEach;
@@ -153,7 +154,8 @@ class OAuthServiceTest {
     @Test
     void handleCallback_webClient_resolvesUserAndIssuesRefreshToken() {
         UserEntity user = UserEntity.builder()
-                .id(UUID.randomUUID()).email("a@a.com").tokenVersion(0).createdAt(Instant.now()).build();
+                .id(UUID.randomUUID()).email("a@a.com").emailVerified(true)
+                .tokenVersion(0).createdAt(Instant.now()).build();
         when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.WEB)));
         OAuthUserIdentity identity = new OAuthUserIdentity("gh-1", "a@a.com", true);
         when(githubClient.authenticate(eq("code"), any(), any())).thenReturn(identity);
@@ -173,7 +175,8 @@ class OAuthServiceTest {
     void handleCallback_mobileClient_resolvesUserAndIssuesDeviceCode() {
         UUID userId = UUID.randomUUID();
         UserEntity user = UserEntity.builder()
-                .id(userId).email("a@a.com").tokenVersion(0).createdAt(Instant.now()).build();
+                .id(userId).email("a@a.com").emailVerified(true)
+                .tokenVersion(0).createdAt(Instant.now()).build();
         when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.MOBILE)));
         OAuthUserIdentity identity = new OAuthUserIdentity("gh-1", "a@a.com", true);
         when(githubClient.authenticate(eq("code"), any(), any())).thenReturn(identity);
@@ -187,6 +190,44 @@ class OAuthServiceTest {
             assertThat(mobile.deviceCode()).isEqualTo("K7PQM2XR");
         });
         // Mobile must not mint a refresh token — that would be an orphaned live credential.
+        verify(jwtService, never()).issueRefreshToken(any());
+    }
+
+    @Test
+    void handleCallback_unverifiedLocalAccount_redirectsWithUnverifiedAccountConflict() {
+        // Auto-linking into an unverified local row is refused; the client is mid-redirect,
+        // so it has to come back as an error code rather than a JSON 409.
+        when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.MOBILE)));
+        OAuthUserIdentity identity = new OAuthUserIdentity("gh-1", "a@a.com", true);
+        when(githubClient.authenticate(eq("code"), any(), any())).thenReturn(identity);
+        when(userService.findOrCreateAndLink(OAuthProvider.GITHUB, identity))
+                .thenThrow(new UnverifiedAccountConflictException());
+
+        assertThatThrownBy(() -> service.handleCallback("github", "code", "valid"))
+                .isInstanceOf(OAuthCallbackException.class)
+                .satisfies(e -> {
+                    assertThat(((OAuthCallbackException) e).getErrorCode())
+                            .isEqualTo(OAuthErrorCode.UNVERIFIED_ACCOUNT_CONFLICT);
+                    assertThat(((OAuthCallbackException) e).getClient()).isEqualTo(OAuthClient.MOBILE);
+                });
+        verify(deviceCodeService, never()).issue(any());
+        verify(jwtService, never()).issueRefreshToken(any());
+    }
+
+    @Test
+    void handleCallback_resolvedAccountNotVerified_issuesNoCredential() {
+        UserEntity unverified = UserEntity.builder()
+                .id(UUID.randomUUID()).email("a@a.com").emailVerified(false)
+                .tokenVersion(0).createdAt(Instant.now()).build();
+        when(stateStore.consume("valid")).thenReturn(Optional.of(state(OAuthClient.WEB)));
+        OAuthUserIdentity identity = new OAuthUserIdentity("gh-1", "a@a.com", true);
+        when(githubClient.authenticate(eq("code"), any(), any())).thenReturn(identity);
+        when(userService.findOrCreateAndLink(OAuthProvider.GITHUB, identity)).thenReturn(unverified);
+
+        assertThatThrownBy(() -> service.handleCallback("github", "code", "valid"))
+                .isInstanceOf(OAuthCallbackException.class)
+                .satisfies(e -> assertThat(((OAuthCallbackException) e).getErrorCode())
+                        .isEqualTo(OAuthErrorCode.ACCOUNT_NOT_VERIFIED));
         verify(jwtService, never()).issueRefreshToken(any());
     }
 

@@ -8,6 +8,7 @@ import com.wharf.backend.model.core.DeviceCodeResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.exception.DeviceCodeNotFoundException;
 import com.wharf.backend.model.exception.DeviceCodeUnusableException;
+import com.wharf.backend.model.exception.EmailNotVerifiedException;
 import com.wharf.backend.model.exception.UserNotFoundException;
 import com.wharf.backend.repository.DeviceCodeRepository;
 import com.wharf.backend.repository.UserRepository;
@@ -95,6 +96,12 @@ public class DeviceCodeService {
 
         UserEntity user = userRepository.findById(code.getUserId())
                 .orElseThrow(() -> new UserNotFoundException(code.getUserId()));
+        // This is a token-issuing path like login, so an unverified account gets nothing.
+        // The rollback also undoes the mark-as-used above, which is what we want: the code
+        // was never actually spent, so it stays usable once the address is verified.
+        if (!user.isEmailVerified()) {
+            throw new EmailNotVerifiedException();
+        }
 
         log.debug("Device code exchanged for user {} (device: {})",
                 user.getId(), request.deviceName() == null ? "unnamed" : request.deviceName());

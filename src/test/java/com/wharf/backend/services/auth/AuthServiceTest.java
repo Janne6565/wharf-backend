@@ -8,7 +8,11 @@ import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RegisterRequest;
 import com.wharf.backend.model.core.TokenMode;
+import com.wharf.backend.model.action.ResendVerificationRequest;
+import com.wharf.backend.model.action.VerifyEmailRequest;
+import com.wharf.backend.model.core.RegistrationResponse;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
+import com.wharf.backend.model.exception.EmailNotVerifiedException;
 import com.wharf.backend.model.exception.AccountSetupConflictException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
@@ -24,6 +28,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -52,41 +57,116 @@ class AuthServiceTest {
     private PasswordEncoder passwordEncoder;
     @Mock
     private JwtService jwtService;
+    @Mock
+    private EmailVerificationService emailVerificationService;
 
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
-        authService = new AuthService(userRepository, vaultService, passwordEncoder, jwtService);
+        authService = new AuthService(userRepository, vaultService, passwordEncoder, jwtService,
+                emailVerificationService);
     }
 
+    /** A fully onboarded account: registered *and* email-verified. */
     private UserEntity user(String email) {
         return UserEntity.builder()
                 .id(UUID.randomUUID())
                 .email(email)
                 .authKeyHash("auth-hash")
                 .recoveryKeyHash("recovery-hash")
+                .emailVerified(true)
                 .tokenVersion(0)
                 .createdAt(Instant.now())
                 .build();
     }
 
     @Test
-    void register_newEmail_persistsUserAndVaultAndIssuesTokens() {
+    void register_newEmail_persistsUnverifiedUserAndVaultAndStartsVerificationWithoutTokens() {
         when(userRepository.existsByEmail("deniz@acme.io")).thenReturn(false);
         when(passwordEncoder.encode(any())).thenReturn("hashed");
         when(userRepository.saveAndFlush(any(UserEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(jwtService.issueIdentityToken(any())).thenReturn("id-token");
-        when(jwtService.issueRefreshToken(any())).thenReturn("refresh-token");
 
-        AuthService.TokenIssue issue = authService.register(
+        RegistrationResponse response = authService.register(
                 new RegisterRequest("Deniz@Acme.io ", "authKey", "recoveryKey", "dmF1bHQ=", TokenMode.DIRECT));
+
+        assertThat(response.email()).isEqualTo("deniz@acme.io");
+        assertThat(response.verificationRequired()).isTrue();
+        verify(vaultService).createInitialVault(any(UUID.class), eq("dmF1bHQ="));
+
+        ArgumentCaptor<UserEntity> saved = ArgumentCaptor.forClass(UserEntity.class);
+        verify(userRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().isEmailVerified()).isFalse();
+        verify(emailVerificationService).startVerification(saved.getValue());
+
+        // Registration alone proves nothing about the address, so it mints no session at all.
+        verify(jwtService, never()).issueIdentityToken(any());
+        verify(jwtService, never()).issueRefreshToken(any());
+    }
+
+    @Test
+    void verifyEmail_validCode_issuesSession() {
+        UserEntity user = user("deniz@acme.io");
+        when(emailVerificationService.verify("deniz@acme.io", "123456")).thenReturn(user);
+        when(jwtService.issueIdentityToken(user)).thenReturn("id-token");
+        when(jwtService.issueRefreshToken(user)).thenReturn("refresh-token");
+
+        AuthService.TokenIssue issue = authService.verifyEmail(
+                new VerifyEmailRequest("deniz@acme.io", "123456", TokenMode.DIRECT));
 
         assertThat(issue.user().email()).isEqualTo("deniz@acme.io");
         assertThat(issue.accessToken()).isEqualTo("id-token");
         assertThat(issue.refreshToken()).isEqualTo("refresh-token");
         assertThat(issue.mode()).isEqualTo(TokenMode.DIRECT);
-        verify(vaultService).createInitialVault(any(UUID.class), eq("dmF1bHQ="));
+    }
+
+    @Test
+    void resendVerification_delegatesToVerificationService() {
+        authService.resendVerification(new ResendVerificationRequest("deniz@acme.io"));
+
+        verify(emailVerificationService).resend("deniz@acme.io");
+    }
+
+    @Test
+    void login_unverifiedEmail_throwsEmailNotVerifiedAfterRunningBcrypt() {
+        UserEntity user = user("unverified@acme.io");
+        user.setEmailVerified(false);
+        when(userRepository.findByEmail("unverified@acme.io")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("authKey", "auth-hash")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("unverified@acme.io", "authKey", null)))
+                .isInstanceOf(EmailNotVerifiedException.class);
+        // The verification gate must sit *after* the bcrypt comparison, or an unverified
+        // account would answer measurably faster than a verified one.
+        verify(passwordEncoder).matches(eq("authKey"), eq("auth-hash"));
+        verify(jwtService, never()).issueIdentityToken(any());
+    }
+
+    @Test
+    void refresh_unverifiedEmail_throwsEmailNotVerified() {
+        UserEntity user = user("unverified@acme.io");
+        user.setEmailVerified(false);
+        when(jwtService.parse("refresh", TokenType.REFRESH))
+                .thenReturn(new JwtService.ParsedToken(user.getId(), 0));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.refresh("refresh", TokenMode.COOKIE))
+                .isInstanceOf(EmailNotVerifiedException.class);
+        verify(jwtService, never()).issueIdentityToken(any());
+    }
+
+    @Test
+    void refresh_verifiedEmail_issuesTokens() {
+        UserEntity user = user("deniz@acme.io");
+        when(jwtService.parse("refresh", TokenType.REFRESH))
+                .thenReturn(new JwtService.ParsedToken(user.getId(), 0));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(jwtService.issueIdentityToken(user)).thenReturn("id-token");
+        when(jwtService.issueRefreshToken(user)).thenReturn("refresh-token");
+
+        AuthService.TokenIssue issue = authService.refresh("refresh", TokenMode.COOKIE);
+
+        assertThat(issue.accessToken()).isEqualTo("id-token");
     }
 
     @Test
@@ -159,6 +239,27 @@ class AuthServiceTest {
         assertThat(issue.accessToken()).isEqualTo("id-token");
         assertThat(issue.mode()).isEqualTo(TokenMode.DIRECT);
         verify(vaultService).replaceOnReset(user.getId(), "bmV3");
+    }
+
+    @Test
+    void recoverReset_unverifiedEmail_throwsEmailNotVerified() {
+        // Recovery reset issues a session, so it is a bypass of the verification gate unless
+        // it is gated too: whoever registered an unverified account also chose its recovery
+        // code, and could otherwise "recover" straight into a working session.
+        UserEntity user = user("unverified@acme.io");
+        user.setEmailVerified(false);
+        when(userRepository.findByEmail("unverified@acme.io")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("recoveryKey", "recovery-hash")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.recoverReset(new RecoveryResetRequest(
+                "unverified@acme.io", "recoveryKey", "newAuth", "newRecovery", "bmV3", null)))
+                .isInstanceOf(EmailNotVerifiedException.class);
+
+        // Nothing may have been rotated or issued on the way out.
+        assertThat(user.getTokenVersion()).isZero();
+        assertThat(user.getAuthKeyHash()).isEqualTo("auth-hash");
+        verify(vaultService, never()).replaceOnReset(any(), any());
+        verify(jwtService, never()).issueIdentityToken(any());
     }
 
     @Test

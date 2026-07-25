@@ -8,15 +8,20 @@ import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
 import com.wharf.backend.model.action.RegisterRequest;
+import com.wharf.backend.model.action.ResendVerificationRequest;
+import com.wharf.backend.model.action.VerifyEmailRequest;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
+import com.wharf.backend.model.core.RegistrationResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.core.UserDto;
 import com.wharf.backend.model.core.VaultUpdateResponse;
 import com.wharf.backend.model.exception.AccountSetupConflictException;
 import com.wharf.backend.model.exception.EmailAlreadyRegisteredException;
+import com.wharf.backend.model.exception.EmailNotVerifiedException;
 import com.wharf.backend.model.exception.InvalidCredentialsException;
 import com.wharf.backend.model.exception.InvalidRecoveryCodeException;
 import com.wharf.backend.model.exception.InvalidTokenException;
+import com.wharf.backend.model.exception.InvalidVerificationCodeException;
 import com.wharf.backend.model.exception.PasswordNotSetException;
 import com.wharf.backend.model.exception.UserNotFoundException;
 import com.wharf.backend.repository.UserRepository;
@@ -38,6 +43,10 @@ import java.util.UUID;
  * Account lifecycle: registration, login, token refresh and recovery-code reset.
  * The server only ever handles client-derived keys, which it bcrypt-hashes before
  * storing — it never sees passwords or plaintext vaults.
+ *
+ * <p>Every path here that mints tokens first insists the account's email address has been
+ * verified. Registration alone proves nothing about the address, and an unproven address
+ * is enough to claim a project invite addressed to it.
  */
 @Service
 public class AuthService {
@@ -51,6 +60,7 @@ public class AuthService {
     private final VaultService vaultService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final EmailVerificationService emailVerificationService;
 
     /**
      * A valid bcrypt hash, generated once, that unknown-email login/recovery attempts are
@@ -62,16 +72,23 @@ public class AuthService {
     public AuthService(UserRepository userRepository,
                        VaultService vaultService,
                        PasswordEncoder passwordEncoder,
-                       JwtService jwtService) {
+                       JwtService jwtService,
+                       EmailVerificationService emailVerificationService) {
         this.userRepository = userRepository;
         this.vaultService = vaultService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.emailVerificationService = emailVerificationService;
         this.dummyKeyHash = passwordEncoder.encode(DUMMY_KEY);
     }
 
+    /**
+     * Create the account and start email verification. Deliberately issues <em>no</em>
+     * tokens: the account is inert until the emailed code is submitted to
+     * {@link #verifyEmail}, which is what actually completes onboarding.
+     */
     @Transactional
-    public TokenIssue register(RegisterRequest request) {
+    public RegistrationResponse register(RegisterRequest request) {
         String email = EmailNormalizer.normalize(request.email());
         if (userRepository.existsByEmail(email)) {
             throw new EmailAlreadyRegisteredException();
@@ -87,6 +104,8 @@ public class AuthService {
                     .email(email)
                     .authKeyHash(passwordEncoder.encode(request.authKey()))
                     .recoveryKeyHash(passwordEncoder.encode(request.recoveryAuthKey()))
+                    // Unverified until the emailed code comes back.
+                    .emailVerified(false)
                     .tokenVersion(0)
                     .createdAt(Instant.now())
                     .build());
@@ -95,9 +114,29 @@ public class AuthService {
         }
 
         vaultService.createInitialVault(user.getId(), request.vault());
+        emailVerificationService.startVerification(user);
 
-        log.debug("Registered new account {}", user.getId());
+        log.debug("Registered new account {} — awaiting email verification", user.getId());
+        return new RegistrationResponse(email, true);
+    }
+
+    /**
+     * Complete registration: consume the emailed code and hand back a full session, exactly
+     * as a login would. This is the point at which an account becomes usable.
+     */
+    // noRollbackFor mirrors EmailVerificationService.verify: this is the outermost boundary,
+    // so it is what actually decides whether the recorded failed attempt survives.
+    @Transactional(noRollbackFor = InvalidVerificationCodeException.class)
+    public TokenIssue verifyEmail(VerifyEmailRequest request) {
+        UserEntity user = emailVerificationService.verify(request.email(), request.code());
+        log.debug("Email verification completed for account {}", user.getId());
         return issue(user, request.tokenModeOrDefault());
+    }
+
+    /** Re-send the verification code. Silently no-ops for unknown or already-verified addresses. */
+    @Transactional
+    public void resendVerification(ResendVerificationRequest request) {
+        emailVerificationService.resend(request.email());
     }
 
     @Transactional(readOnly = true)
@@ -110,6 +149,9 @@ public class AuthService {
         if (!passwordEncoder.matches(request.authKey(), hash) || user == null || user.getAuthKeyHash() == null) {
             throw new InvalidCredentialsException();
         }
+        // Checked *after* the bcrypt comparison above on purpose: short-circuiting here would
+        // skip the equalising hash for unverified accounts and reintroduce a timing signal.
+        requireVerified(user);
         log.debug("Login for account {}", user.getId());
         return issue(user, request.tokenModeOrDefault());
     }
@@ -125,6 +167,7 @@ public class AuthService {
         if (user.getTokenVersion() != parsed.tokenVersion()) {
             throw new InvalidTokenException("Refresh token has been revoked");
         }
+        requireVerified(user);
         return issue(user, mode);
     }
 
@@ -137,6 +180,11 @@ public class AuthService {
     @Transactional
     public TokenIssue recoverReset(RecoveryResetRequest request) {
         UserEntity user = requireRecoveryMatch(request.email(), request.recoveryAuthKey());
+        // Recovery reset mints a session, so it is a token-issuance path like any other and
+        // has to respect the verification gate. Without this an unverified account could skip
+        // verification entirely: whoever registered it also chose its recovery code, so they
+        // could simply "recover" their way to a working session on an unproven address.
+        requireVerified(user);
 
         user.setAuthKeyHash(passwordEncoder.encode(request.newAuthKey()));
         user.setRecoveryKeyHash(passwordEncoder.encode(request.newRecoveryAuthKey()));
@@ -217,6 +265,16 @@ public class AuthService {
 
         log.debug("Master password changed for account {} (vault now v{})", userId, updated.version());
         return updated;
+    }
+
+    /**
+     * Refuse to mint tokens for an account that has not proven control of its address.
+     * Shared by every issuing path so there is exactly one place this rule lives.
+     */
+    private void requireVerified(UserEntity user) {
+        if (!user.isEmailVerified()) {
+            throw new EmailNotVerifiedException();
+        }
     }
 
     private TokenIssue issue(UserEntity user, TokenMode mode) {

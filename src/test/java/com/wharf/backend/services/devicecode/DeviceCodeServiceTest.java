@@ -8,6 +8,7 @@ import com.wharf.backend.model.core.DeviceCodeResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.exception.DeviceCodeNotFoundException;
 import com.wharf.backend.model.exception.DeviceCodeUnusableException;
+import com.wharf.backend.model.exception.EmailNotVerifiedException;
 import com.wharf.backend.repository.DeviceCodeRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
@@ -25,6 +26,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -50,7 +52,8 @@ class DeviceCodeServiceTest {
 
     private UserEntity user() {
         return UserEntity.builder().id(userId).email("deniz@acme.io")
-                .authKeyHash("a").recoveryKeyHash("r").tokenVersion(0).createdAt(Instant.now()).build();
+                .authKeyHash("a").recoveryKeyHash("r").emailVerified(true)
+                .tokenVersion(0).createdAt(Instant.now()).build();
     }
 
     @Test
@@ -80,6 +83,23 @@ class DeviceCodeServiceTest {
         assertThat(code.getUsedAt()).isNotNull();
         assertThat(response.accessToken()).isEqualTo("id-token");
         assertThat(response.refreshToken()).isEqualTo("refresh-token");
+    }
+
+    @Test
+    void exchange_unverifiedAccount_throwsEmailNotVerifiedAndIssuesNoSession() {
+        // The TUI and the mobile OAuth hand-off both land here, so it is a token-issuing
+        // path and gets the same verification gate as login.
+        DeviceCodeEntity code = DeviceCodeEntity.builder()
+                .id(UUID.randomUUID()).userId(userId).codeHash("hash")
+                .expiresAt(Instant.now().plusSeconds(300)).createdAt(Instant.now()).build();
+        UserEntity unverified = user();
+        unverified.setEmailVerified(false);
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.of(code));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(unverified));
+
+        assertThatThrownBy(() -> deviceCodeService.exchange(new DeviceCodeExchangeRequest("ABCD2345", null)))
+                .isInstanceOf(EmailNotVerifiedException.class);
+        verify(jwtService, never()).issueIdentityToken(any());
     }
 
     @Test

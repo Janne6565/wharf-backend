@@ -36,6 +36,13 @@ Server-side hardening:
 - **Recovery has no backdoor.** The only password-reset path is a valid recovery code.
   Resetting rotates the recovery code (invalidating the old one), re-encrypts the vault,
   and **revokes all existing sessions** by bumping the account's `tokenVersion`.
+- **An email address must be proven before it grants anything.** Registration issues no
+  tokens; a bcrypt-hashed, 15-minute, 5-attempt 6-digit code does (see
+  [Email verification](#email-verification)). This closes invite hijack: project invites are
+  matched on the email string, so an unproven address would otherwise be enough to claim
+  one. Note the residual risk — an attacker can still *register* an address they do not own
+  and thereby occupy it (blocking the real owner from registering until the row is cleaned
+  up), and OAuth deliberately refuses to link into such a row rather than merging into it.
 
 Threat-model note — vault contents: clients may opt-in sync **secrets** inside the
 personal vault payload, currently per-host login passwords and (document schema 3,
@@ -98,12 +105,14 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 
 | Method & path | Body | Result |
 |---------------|------|--------|
-| `POST /auth/register` | `{email, authKey, recoveryAuthKey, vault}` | `201 {user, tokens}` · `409` on duplicate email |
-| `POST /auth/login` | `{email, authKey, tokenMode?}` | `{user, accessToken, refreshToken?}` — `COOKIE` (default) sets an httpOnly refresh cookie; `DIRECT` returns it in the body |
-| `POST /auth/refresh` | refresh cookie, or `{refreshToken, tokenMode?}` | new `{accessToken}` (+ rotated refresh) |
+| `POST /auth/register` | `{email, authKey, recoveryAuthKey, vault}` | `202 {email, verificationRequired}` — creates the account and emails a 6-digit code. **No tokens, no cookie**: the account is inert until `/auth/verify-email`. `409` on duplicate email |
+| `POST /auth/verify-email` | `{email, code, tokenMode?}` | `{user, accessToken, refreshToken?}` — same session shape as login (`COOKIE` default sets the httpOnly refresh cookie; `DIRECT` returns it in the body). `400 code=invalid_verification_code` for a wrong, expired, missing or attempt-exhausted code (one generic error for all of them) |
+| `POST /auth/resend-verification` | `{email}` | `202`, empty body — **always**, whether or not the address belongs to an unverified account. Subject to a silent 60-second per-account cooldown |
+| `POST /auth/login` | `{email, authKey, tokenMode?}` | `{user, accessToken, refreshToken?}` — `COOKIE` (default) sets an httpOnly refresh cookie; `DIRECT` returns it in the body. `403 code=email_not_verified` while the address is unverified |
+| `POST /auth/refresh` | refresh cookie, or `{refreshToken, tokenMode?}` | new `{accessToken}` (+ rotated refresh) · `403 code=email_not_verified` |
 | `POST /auth/recover/verify` | `{email, recoveryAuthKey}` | `{vault}` for browser-side decryption · `401` on mismatch (aggressive rate limit) |
 | `POST /auth/recover/reset` | `{email, recoveryAuthKey, newAuthKey, newRecoveryAuthKey, vault}` | `{user, tokens}` — atomically replaces the credential hashes + vault and revokes all sessions |
-| `POST /device-codes/exchange` | `{code, deviceName?}` | `{user, accessToken, refreshToken}` (always DIRECT — the TUI). One-time; wrong code → `404`, expired/used → `410` |
+| `POST /device-codes/exchange` | `{code, deviceName?}` | `{user, accessToken, refreshToken}` (always DIRECT — the TUI). One-time; wrong code → `404`, expired/used → `410`, unverified account → `403 code=email_not_verified` (the code is not consumed) |
 | `GET /auth/oauth/providers` | — | `{providers}` — slugs of enabled providers, e.g. `{"providers":["google","github"]}` (empty when none configured) |
 | `GET /auth/oauth/{provider}/authorize` | `?client=web\|mobile` | `302` to the provider consent page (one-time `state`); `client=mobile` records a mobile flow (default `web`); disabled provider → `302 …?error=provider_disabled` (web `/oauth/complete`, mobile `wharf://oauth`) |
 | `GET /auth/oauth/{provider}/callback` | `?code&state` | Web: `302 /oauth/complete` + refresh cookie. Mobile: `302 wharf://oauth?code=<device-code>` (no cookie; exchange at `/device-codes/exchange`). Failure → `…?error=<code>` on the client's target (see [OAuth](#oauth-social-login)) |
@@ -119,7 +128,10 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 | `GET /vault` | — | `{vault, version, updatedAt}` |
 | `PUT /vault` | `{vault, expectedVersion}` | `{version, updatedAt}` · `409` on version conflict (optimistic concurrency) |
 
-All errors are RFC 7807 `application/problem+json`.
+All errors are RFC 7807 `application/problem+json`. Errors clients must branch on carry a
+stable machine-readable `code` property alongside the human-readable `detail`
+(`email_not_verified`, `invalid_verification_code`, `unverified_account_conflict`) — match on
+`code`, never on `detail`.
 
 ### Projects (team workspaces)
 
@@ -158,7 +170,7 @@ Key distribution:
 | `GET /projects/{id}/pending-keys` | — | `[{userId, email, publicKey}]` — admin+; members awaiting a key who have published a public key to seal against |
 | `POST /projects/{id}/members/{userId}/key` | `{wrappedDek, vaultVersion}` | `204` — admin+; seals the DEK to a member. `400` if the wrapped key is not 80 bytes; `409` if `vaultVersion` != the current vault version (guards wrapping a stale DEK across a rotation) |
 
-Invites (no email delivery in this milestone — surfaced to the invitee via their own listing):
+Invites (the invitee is notified by email *and* sees the invite in their own listing):
 
 | Method & path | Body | Result |
 |---------------|------|--------|
@@ -188,6 +200,39 @@ Invites (no email delivery in this milestone — surfaced to the invitee via the
   malicious server could substitute a key it controls and MITM the DEK wrapping. There is no
   key verification (TOFU / fingerprint comparison) between members yet; this is accepted for
   v1 and is the natural next hardening step.
+
+### Email verification
+
+An address is only ever taken at face value once it has been proven. Registration used to
+hand out a session immediately, which meant anyone could register **someone else's** email —
+enough to hijack a project invite addressed to it, since invites are matched purely on the
+email string. So:
+
+- `POST /auth/register` creates the account (and its initial vault) but returns **202 with no
+  tokens and no cookie**, and emails a **6-digit code**.
+- `POST /auth/verify-email` `{email, code}` marks the address verified and issues the session
+  — this is what completes onboarding.
+- **Every token-issuing path refuses an unverified account** with `403 code=email_not_verified`:
+  `/auth/login`, `/auth/refresh` and `/device-codes/exchange` (which covers both the TUI and
+  the mobile OAuth hand-off). In `login` the check runs *after* the bcrypt comparison, so it
+  does not reintroduce a user-enumeration timing signal.
+- The code is generated with `SecureRandom` and stored **bcrypt-hashed** — never plaintext.
+  TTL **15 minutes**, **5 failed attempts** (the fifth destroys the code and forces a
+  resend), resend cooldown **60 seconds**, and a dedicated tight per-IP rate-limit bucket
+  (`rate-limit.verify-*`, default 5/min) on both endpoints.
+- Six digits is only ~20 bits, so **the attempt cap is the actual security control** — the
+  code length is a usability choice.
+- `POST /auth/resend-verification` always answers `202` with an empty body, and does nothing
+  at all for an unknown or already-verified address. Likewise every verify failure returns the
+  same generic `invalid_verification_code`. Neither endpoint is an oracle for which addresses
+  are registered.
+- **OAuth accounts skip the challenge**: the provider already proved ownership (an unverified
+  provider identity is rejected outright), so an account created via OAuth is verified on the
+  spot. Conversely, an OAuth identity is **never auto-linked into an unverified local
+  account** — that row could be a squatter who set a password on someone else's address, and
+  linking would let them co-inhabit it.
+- Existing accounts were backfilled as verified by the `V6` migration; the column default
+  flips to `false` for everything created afterwards.
 
 ### JWT model
 
@@ -225,12 +270,15 @@ password auth key, no recovery key and no vault**. The user sets those *after* f
    - **GitHub**: exchanges at `github.com/login/oauth/access_token`, then `GET /user` (subject
      = `id`) and `GET /user/emails` for the **primary + verified** address (scope `user:email`).
 4. It then **auto-links by verified email**: if an account with that (normalized) email
-   exists, the identity is linked to it; otherwise a new OAuth-only account is created.
-   Unverified emails are rejected.
+   exists *and has itself verified that address*, the identity is linked to it; otherwise a
+   new OAuth-only account is created (already `emailVerified`, since the provider proved it).
+   Unverified provider emails are rejected, and so is linking into an **unverified local
+   account** — that row may belong to a squatter (`error=unverified_account_conflict`).
 5. On success it sets the `wharf_refresh` httpOnly cookie and `302`-redirects to
    `/oauth/complete`; the frontend then silently calls `/auth/refresh` to get its access
    token. On any failure it redirects to `/oauth/complete?error=<code>` where `<code>` is one
-   of `provider_disabled`, `invalid_state`, `email_not_verified`, `provider_error`,
+   of `provider_disabled`, `invalid_state`, `email_not_verified` (the *provider's* email is
+   unverified), `unverified_account_conflict`, `account_not_verified`, `provider_error`,
    `server_error` (no sensitive detail ever reaches the URL).
 
 ### Mobile hand-off (deep link)
@@ -246,7 +294,8 @@ cookie: it issues a one-time **device code** for the resolved user (via the same
 no mobile-specific exchange endpoint, and no orphaned refresh token is ever minted.
 
 Mobile failures redirect to `wharf://oauth?error=<code>` with the same error codes
-(`provider_disabled`, `email_not_verified`, `provider_error`, `server_error`). The one
+(`provider_disabled`, `email_not_verified`, `unverified_account_conflict`,
+`account_not_verified`, `provider_error`, `server_error`). The one
 exception is `invalid_state`: the state row is unknown, so the initiating client is
 unknowable and it falls back to the web target `/oauth/complete?error=invalid_state`. The
 deep-link base is server config (`oauth.mobile-redirect-uri`, default `wharf://oauth`), never

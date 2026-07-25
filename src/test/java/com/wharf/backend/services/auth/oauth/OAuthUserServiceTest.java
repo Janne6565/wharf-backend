@@ -3,6 +3,7 @@ package com.wharf.backend.services.auth.oauth;
 import com.wharf.backend.entity.OAuthIdentityEntity;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.core.OAuthProvider;
+import com.wharf.backend.model.exception.UnverifiedAccountConflictException;
 import com.wharf.backend.repository.OAuthIdentityRepository;
 import com.wharf.backend.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,6 +43,7 @@ class OAuthUserServiceTest {
         return UserEntity.builder()
                 .id(UUID.randomUUID())
                 .email(email)
+                .emailVerified(true)
                 .tokenVersion(0)
                 .createdAt(Instant.now())
                 .build();
@@ -98,7 +101,26 @@ class OAuthUserServiceTest {
         // OAuth-only account: no password / recovery hashes until set client-side.
         assertThat(result.getAuthKeyHash()).isNull();
         assertThat(result.getRecoveryKeyHash()).isNull();
+        // The provider already proved ownership of the address, so no code challenge is owed.
+        assertThat(result.isEmailVerified()).isTrue();
         verify(userRepository).save(any(UserEntity.class));
         verify(identityRepository).save(any(OAuthIdentityEntity.class));
+    }
+
+    @Test
+    void noIdentityButUnverifiedEmailMatches_refusesToLink() {
+        // The matching row may be a squatter who registered someone else's address; linking
+        // the real owner's provider identity into it would let them share the account.
+        UserEntity squatter = user("deniz@acme.io");
+        squatter.setEmailVerified(false);
+        when(identityRepository.findByProviderAndSubject(OAuthProvider.GOOGLE, "goog-3"))
+                .thenReturn(Optional.empty());
+        when(userRepository.findByEmail("deniz@acme.io")).thenReturn(Optional.of(squatter));
+
+        assertThatThrownBy(() -> service.findOrCreateAndLink(OAuthProvider.GOOGLE,
+                new OAuthUserIdentity("goog-3", "deniz@acme.io", true)))
+                .isInstanceOf(UnverifiedAccountConflictException.class);
+        verify(identityRepository, never()).save(any());
+        verify(userRepository, never()).save(any());
     }
 }

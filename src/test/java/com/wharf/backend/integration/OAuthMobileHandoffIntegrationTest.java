@@ -94,6 +94,8 @@ class OAuthMobileHandoffIntegrationTest {
                 .email("mobile-oauth@acme.io")
                 .authKeyHash(null)
                 .recoveryKeyHash(null)
+                // OAuth proved the address, so the account is verified from the start.
+                .emailVerified(true)
                 .tokenVersion(0)
                 .createdAt(Instant.now())
                 .build());

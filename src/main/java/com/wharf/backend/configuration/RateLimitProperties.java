@@ -9,7 +9,9 @@ import java.time.Duration;
 
 /**
  * Per-IP token-bucket limits for the public auth endpoints. Recovery endpoints get
- * their own, tighter bucket because a valid recovery code is the only reset path.
+ * their own, tighter bucket because a valid recovery code is the only reset path, and the
+ * email-verification endpoints get one too: a 6-digit code is only ~20 bits, so throttling
+ * guesses (and outbound resend mail) matters as much as the per-code attempt cap.
  */
 @Validated
 @ConfigurationProperties(prefix = "rate-limit")
@@ -35,6 +37,12 @@ public record RateLimitProperties(
 
         @NotNull
         Duration recoveryRefillPeriod,
+
+        @Min(1)
+        int verifyCapacity,
+
+        @NotNull
+        Duration verifyRefillPeriod,
 
         @Min(1)
         int inviteCapacity,

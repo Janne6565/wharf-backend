@@ -25,7 +25,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BaseException.class)
     public ProblemDetail handleBaseException(BaseException ex) {
         logByStatus(ex.getStatus(), ex.getDetail(), ex);
-        return ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getDetail());
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(ex.getStatus(), ex.getDetail());
+        // Only some failures need to be branched on programmatically; those carry a stable
+        // code so clients never have to string-match the (freely reworded) detail.
+        if (ex.getCode() != null) {
+            problemDetail.setProperty("code", ex.getCode());
+        }
+        return problemDetail;
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

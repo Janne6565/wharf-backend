@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.wharf.backend.configuration.Profiles;
+import com.wharf.backend.entity.UserEntity;
+import com.wharf.backend.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -42,6 +44,9 @@ class ProjectsFlowIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UserRepository userRepository;
+
     private String base64(String plain) {
         return Base64.getEncoder().encodeToString(plain.getBytes(StandardCharsets.UTF_8));
     }
@@ -61,19 +66,32 @@ class ProjectsFlowIntegrationTest {
         return "Bearer " + token;
     }
 
-    /** Registers an account in DIRECT mode and returns its access token. */
+    /**
+     * Registers an account, marks its address verified (registration no longer issues
+     * tokens — that is the email-verification tests' subject) and logs in with DIRECT
+     * tokens, returning the access token.
+     */
     private String register(String email) throws Exception {
         String body = objectMapper.writeValueAsString(objectMapper.createObjectNode()
                 .put("email", email)
                 .put("authKey", "auth-" + email)
                 .put("recoveryAuthKey", "recovery-" + email)
-                .put("vault", base64("personal-vault"))
-                .put("tokenMode", "DIRECT"));
-        MvcResult result = mockMvc.perform(post("/api/v1/auth/register")
+                .put("vault", base64("personal-vault")));
+        mockMvc.perform(post("/api/v1/auth/register")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted());
+
+        UserEntity user = userRepository.findByEmail(email).orElseThrow();
+        user.setEmailVerified(true);
+        userRepository.saveAndFlush(user);
+
+        String loginBody = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("email", email).put("authKey", "auth-" + email).put("tokenMode", "DIRECT"));
+        MvcResult result = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON).content(loginBody))
+                .andExpect(status().isOk())
                 .andReturn();
-        return json(result).path("tokens").path("accessToken").asText();
+        return json(result).path("accessToken").asText();
     }
 
     private String myUserId(String token) throws Exception {

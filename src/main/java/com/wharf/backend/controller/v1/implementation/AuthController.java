@@ -9,9 +9,12 @@ import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
 import com.wharf.backend.model.action.RegisterRequest;
+import com.wharf.backend.model.action.ResendVerificationRequest;
+import com.wharf.backend.model.action.VerifyEmailRequest;
 import com.wharf.backend.model.core.AccessTokenResponse;
 import com.wharf.backend.model.core.AuthResponse;
 import com.wharf.backend.model.core.RecoveryVerifyResponse;
+import com.wharf.backend.model.core.RegistrationResponse;
 import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.core.TokenPair;
@@ -22,7 +25,6 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,19 +43,26 @@ public class AuthController implements AuthApi {
     }
 
     @Override
-    public ResponseEntity<AuthResponse> register(RegisterRequest request, HttpServletResponse response) {
-        AuthService.TokenIssue issue = authService.register(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(toAuthResponse(issue, response));
+    public ResponseEntity<RegistrationResponse> register(RegisterRequest request) {
+        // 202, not 201-with-tokens: the account exists but is inert until the emailed code
+        // comes back, so there is deliberately no session and no cookie to hand out here.
+        return ResponseEntity.accepted().body(authService.register(request));
+    }
+
+    @Override
+    public ResponseEntity<SessionResponse> verifyEmail(VerifyEmailRequest request, HttpServletResponse response) {
+        return ResponseEntity.ok(toSessionResponse(authService.verifyEmail(request), response));
+    }
+
+    @Override
+    public ResponseEntity<Void> resendVerification(ResendVerificationRequest request) {
+        authService.resendVerification(request);
+        return ResponseEntity.accepted().build();
     }
 
     @Override
     public ResponseEntity<SessionResponse> login(LoginRequest request, HttpServletResponse response) {
-        AuthService.TokenIssue issue = authService.login(request);
-        if (issue.mode() == TokenMode.COOKIE) {
-            setRefreshCookie(response, issue.refreshToken());
-            return ResponseEntity.ok(new SessionResponse(issue.user(), issue.accessToken(), null));
-        }
-        return ResponseEntity.ok(new SessionResponse(issue.user(), issue.accessToken(), issue.refreshToken()));
+        return ResponseEntity.ok(toSessionResponse(authService.login(request), response));
     }
 
     @Override
@@ -97,7 +106,19 @@ public class AuthController implements AuthApi {
     }
 
     /**
-     * Builds the register / recovery-reset body: in COOKIE mode the refresh token is set as
+     * Builds the login / verify-email body: in COOKIE mode the refresh token is set as an
+     * httpOnly cookie and omitted from the body; in DIRECT mode it is returned in the body.
+     */
+    private SessionResponse toSessionResponse(AuthService.TokenIssue issue, HttpServletResponse response) {
+        if (issue.mode() == TokenMode.COOKIE) {
+            setRefreshCookie(response, issue.refreshToken());
+            return new SessionResponse(issue.user(), issue.accessToken(), null);
+        }
+        return new SessionResponse(issue.user(), issue.accessToken(), issue.refreshToken());
+    }
+
+    /**
+     * Builds the recovery-reset body: in COOKIE mode the refresh token is set as
      * an httpOnly cookie and omitted from the pair; in DIRECT mode it is returned in the body.
      */
     private AuthResponse toAuthResponse(AuthService.TokenIssue issue, HttpServletResponse response) {

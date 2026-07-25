@@ -3,6 +3,7 @@ package com.wharf.backend.services.auth.oauth;
 import com.wharf.backend.entity.OAuthIdentityEntity;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.core.OAuthProvider;
+import com.wharf.backend.model.exception.UnverifiedAccountConflictException;
 import com.wharf.backend.repository.OAuthIdentityRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.services.auth.EmailNormalizer;
@@ -42,7 +43,8 @@ public class OAuthUserService {
      * <ol>
      *   <li>a known {@code (provider, subject)} link → its user;</li>
      *   <li>otherwise an existing account with the same (normalized) verified email →
-     *       auto-link the new identity to it;</li>
+     *       auto-link the new identity to it, <em>provided</em> that account's own email is
+     *       verified;</li>
      *   <li>otherwise create a fresh OAuth-only account and link it.</li>
      * </ol>
      */
@@ -58,10 +60,25 @@ public class OAuthUserService {
 
         String email = EmailNormalizer.normalize(identity.email());
         UserEntity user = userRepository.findByEmail(email)
+                .map(OAuthUserService::requireVerifiedForLinking)
                 .orElseGet(() -> createOAuthUser(email));
 
         linkIdentity(provider, identity, user, email);
         return user;
+    }
+
+    /**
+     * Auto-linking by email is only safe when the local account has itself proven control
+     * of that address. An unverified row may be a squatter who registered someone else's
+     * email and set a password on it; linking the real owner's provider identity into it
+     * would let the squatter co-inhabit the account (their password would keep working, and
+     * their vault/recovery material would be the account's). Refuse instead.
+     */
+    private static UserEntity requireVerifiedForLinking(UserEntity existing) {
+        if (!existing.isEmailVerified()) {
+            throw new UnverifiedAccountConflictException();
+        }
+        return existing;
     }
 
     private UserEntity createOAuthUser(String email) {
@@ -71,6 +88,10 @@ public class OAuthUserService {
                 // No password / recovery / vault yet — set client-side after first login.
                 .authKeyHash(null)
                 .recoveryKeyHash(null)
+                // The provider already proved ownership of this address (OAuthService
+                // rejects an unverified provider identity outright), so there is nothing
+                // left for our own code-by-email challenge to establish.
+                .emailVerified(true)
                 .tokenVersion(0)
                 .createdAt(Instant.now())
                 .build());

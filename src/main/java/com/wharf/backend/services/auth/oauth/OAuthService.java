@@ -5,6 +5,8 @@ import com.wharf.backend.entity.OAuthStateEntity;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.core.OAuthClient;
 import com.wharf.backend.model.core.OAuthProvider;
+import com.wharf.backend.model.exception.EmailNotVerifiedException;
+import com.wharf.backend.model.exception.UnverifiedAccountConflictException;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.services.devicecode.DeviceCodeService;
 import org.slf4j.Logger;
@@ -21,8 +23,8 @@ import java.util.stream.Collectors;
 /**
  * Orchestrates OAuth social login: it builds the provider consent URL, and on the callback
  * it validates the one-time state, drives the provider-specific code exchange, enforces
- * that the email is verified, resolves the local account, and mints the credential the
- * initiating client needs — a refresh token for the web SPA, or a one-time device code for
+ * that the email is verified (both at the provider and on the resolved local account),
+ * resolves the local account, and mints the credential the initiating client needs — a refresh token for the web SPA, or a one-time device code for
  * the mobile app. OAuth is only the authentication step — the app's self-issued JWT is
  * still the session.
  */
@@ -105,8 +107,23 @@ public class OAuthService {
             }
 
             UserEntity user = userService.findOrCreateAndLink(provider, identity);
+            // Belt and braces on the shared token-issuance rule. An account resolved here is
+            // normally verified already (one created by OAuth is verified on the spot, and an
+            // unverified pre-existing one is refused for linking above), so this should be
+            // unreachable — but this is a token-issuing path, and those all check.
+            if (!user.isEmailVerified()) {
+                throw new EmailNotVerifiedException();
+            }
+
             log.debug("Completed {} {} login for account {}", client, provider, user.getId());
             return buildResult(client, user);
+        } catch (UnverifiedAccountConflictException ex) {
+            // The client is mid-redirect, so surface this as an error code on the deep
+            // link / complete page rather than as a JSON 409 nobody would ever see.
+            log.warn("Refusing to link {} identity into an unverified local account", provider);
+            throw new OAuthCallbackException(OAuthErrorCode.UNVERIFIED_ACCOUNT_CONFLICT, client, ex);
+        } catch (EmailNotVerifiedException ex) {
+            throw new OAuthCallbackException(OAuthErrorCode.ACCOUNT_NOT_VERIFIED, client, ex);
         } catch (OAuthCallbackException ex) {
             // Re-tag failures thrown without knowledge of the client (e.g. PROVIDER_ERROR
             // from the provider client) with the now-known client.

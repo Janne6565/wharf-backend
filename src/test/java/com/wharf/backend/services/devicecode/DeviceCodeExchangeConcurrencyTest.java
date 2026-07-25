@@ -48,6 +48,7 @@ class DeviceCodeExchangeConcurrencyTest {
                 .email("race-" + userId + "@acme.io")
                 .authKeyHash("auth")
                 .recoveryKeyHash("recovery")
+                .emailVerified(true)
                 .tokenVersion(0)
                 .createdAt(Instant.now())
                 .build());

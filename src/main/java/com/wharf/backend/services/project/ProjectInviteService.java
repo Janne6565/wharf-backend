@@ -36,9 +36,13 @@ import java.util.stream.Collectors;
 
 /**
  * Project invites: an admin invites an email, the invitee sees and accepts/declines it.
- * There is no email delivery in this milestone — invites are surfaced to the invitee via
- * their own {@code /users/me/invites} listing. An accepted invitee joins as a keyless MEMBER
- * (awaiting an admin to seal the DEK to their public key).
+ * The invitee is notified by email (best-effort, via {@link InviteNotificationService}) and
+ * the invite also appears in their own {@code /users/me/invites} listing, which is the
+ * authoritative surface. An accepted invitee joins as a keyless MEMBER (awaiting an admin to
+ * seal the DEK to their public key).
+ *
+ * <p>Invites are matched purely on the email string, which is exactly why an address has to
+ * be verified before it grants anything — see {@code EmailVerificationService}.
  */
 @Service
 public class ProjectInviteService {
