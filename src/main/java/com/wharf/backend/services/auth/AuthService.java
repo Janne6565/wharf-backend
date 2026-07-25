@@ -268,6 +268,26 @@ public class AuthService {
     }
 
     /**
+     * "Sign out everywhere": bump the account's token version, which every issued token
+     * embeds and {@link com.wharf.backend.security.JwtFilter} re-checks against the row on
+     * each request. One increment therefore kills <em>every</em> identity and refresh token
+     * already handed out — this browser, other browsers, and the paired TUI and mobile
+     * clients, which have no other pairing than their tokens and will have to be paired
+     * again via a fresh device code.
+     *
+     * <p>This is the only way the stateless model can actually revoke a token, which is why
+     * it is opt-in rather than what an ordinary logout does.
+     */
+    @Transactional
+    public void revokeAllSessions(UUID userId) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException(userId));
+        user.setTokenVersion(user.getTokenVersion() + 1);
+        log.debug("Revoked all sessions for account {} (token version now v{})",
+                userId, user.getTokenVersion());
+    }
+
+    /**
      * Refuse to mint tokens for an account that has not proven control of its address.
      * Shared by every issuing path so there is exactly one place this rule lives.
      */

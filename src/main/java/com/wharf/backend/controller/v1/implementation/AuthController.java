@@ -5,6 +5,7 @@ import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.AccountSetupRequest;
 import com.wharf.backend.model.action.ChangePasswordRequest;
 import com.wharf.backend.model.action.LoginRequest;
+import com.wharf.backend.model.action.LogoutRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
@@ -19,6 +20,7 @@ import com.wharf.backend.model.core.SessionResponse;
 import com.wharf.backend.model.core.TokenMode;
 import com.wharf.backend.model.core.TokenPair;
 import com.wharf.backend.model.core.VaultUpdateResponse;
+import com.wharf.backend.model.exception.InvalidTokenException;
 import com.wharf.backend.security.RefreshCookieFactory;
 import com.wharf.backend.services.auth.AuthService;
 import jakarta.servlet.http.Cookie;
@@ -81,6 +83,43 @@ public class AuthController implements AuthApi {
             return ResponseEntity.ok(new AccessTokenResponse(issue.accessToken(), null));
         }
         return ResponseEntity.ok(new AccessTokenResponse(issue.accessToken(), issue.refreshToken()));
+    }
+
+    /**
+     * Two deliberately different things behind one endpoint.
+     *
+     * <p><b>Default — local sign-out.</b> Answer with the clearing cookie so the browser drops
+     * its refresh cookie. That ends the session <em>in this browser</em> and nowhere else: the
+     * refresh token stays cryptographically valid until it expires, because the model is
+     * stateless and there is no server-side token store to mark it dead. That is the accepted
+     * trade-off of stateless JWTs, not an oversight — the mitigation is the short identity-token
+     * lifetime, and {@code allDevices} for when it actually matters.
+     *
+     * <p><b>{@code allDevices=true} — global revocation.</b> Bump the token version so every
+     * issued token dies at once. This also unpairs the TUI and mobile clients, whose only
+     * pairing is their tokens; that is what "sign out everywhere" means, and why it is not
+     * the default.
+     *
+     * <p><b>Why the route is not blanket-authenticated.</b> A logout has to work exactly when
+     * the session is broken — an expired access token is the single most common state a user
+     * is in when they reach for "sign out". Behind {@code .authenticated()} that request would
+     * 401 and the browser would never receive the clearing cookie for its httpOnly refresh
+     * cookie, which it cannot delete itself. So the plain cookie-clear stays unauthenticated:
+     * its entire effect is telling the caller's own browser to drop its own cookie, it reveals
+     * nothing and it changes no server state. The privileged half is gated here instead —
+     * {@code allDevices} needs a valid identity token, so the {@code tokenVersion} bump can
+     * only ever hit the authenticated caller's own account, never someone else's.
+     */
+    @Override
+    public ResponseEntity<Void> logout(LogoutRequest request, UserEntity user, HttpServletResponse response) {
+        if (request != null && request.allDevicesOrDefault()) {
+            if (user == null) {
+                throw new InvalidTokenException("A valid identity token is required to sign out everywhere");
+            }
+            authService.revokeAllSessions(user.getId());
+        }
+        response.addHeader(HttpHeaders.SET_COOKIE, refreshCookieFactory.clearing().toString());
+        return ResponseEntity.noContent().build();
     }
 
     @Override

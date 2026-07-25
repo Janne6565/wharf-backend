@@ -63,6 +63,13 @@ public class SecurityConfig {
                         // Master-password change is authenticated too — same first-match-wins
                         // ordering ahead of the blanket /api/v1/auth/** permitAll.
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/password").authenticated()
+                        // Logout is intentionally NOT listed here: it falls through to the
+                        // blanket permitAll below so a browser whose access token has already
+                        // expired can still be handed the clearing refresh cookie (a 401 here
+                        // would leave the httpOnly cookie stuck). Its privileged half —
+                        // allDevices, which bumps tokenVersion — is gated in AuthController on
+                        // the authenticated principal, so it can only ever revoke the caller's
+                        // own sessions. See AuthController#logout for the full reasoning.
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/device-codes/exchange").permitAll()
                         .anyRequest().authenticated())

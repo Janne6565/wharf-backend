@@ -5,6 +5,7 @@ import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.AccountSetupRequest;
 import com.wharf.backend.model.action.ChangePasswordRequest;
 import com.wharf.backend.model.action.LoginRequest;
+import com.wharf.backend.model.action.LogoutRequest;
 import com.wharf.backend.model.action.RecoveryResetRequest;
 import com.wharf.backend.model.action.RecoveryVerifyRequest;
 import com.wharf.backend.model.action.RefreshRequest;
@@ -85,6 +86,24 @@ public interface AuthApi {
     ResponseEntity<AccessTokenResponse> refresh(@RequestBody(required = false) RefreshRequest request,
                                                 HttpServletRequest httpRequest,
                                                 HttpServletResponse response);
+
+    @PostMapping("/logout")
+    @Operation(operationId = "logout",
+            summary = "End the session in this browser, or revoke every session",
+            description = "Always answers 204 and always returns the clearing refresh cookie (Max-Age=0), so a "
+                    + "browser can drop its httpOnly cookie even when its access token has already expired — "
+                    + "which is precisely when people sign out. Without allDevices this is a *local* sign-out: "
+                    + "the refresh token itself stays cryptographically valid until it expires, because the "
+                    + "design is stateless and there is no server-side token store. With allDevices=true the "
+                    + "account's token version is bumped and every issued token dies immediately, including the "
+                    + "paired TUI and mobile clients; that variant requires a valid identity token (401 without "
+                    + "one), so nobody can revoke someone else's sessions.",
+            security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
+    @ApiResponse(responseCode = "204", description = "Signed out; refresh cookie cleared")
+    @ApiResponse(responseCode = "401", description = "allDevices was requested without a valid identity token")
+    ResponseEntity<Void> logout(@RequestBody(required = false) LogoutRequest request,
+                                @AuthenticationPrincipal UserEntity user,
+                                HttpServletResponse response);
 
     @PostMapping("/recover/verify")
     @Operation(operationId = "recoverVerify",

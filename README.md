@@ -116,6 +116,7 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 | `POST /auth/resend-verification` | `{email}` | `202`, empty body — **always**, whether or not the address belongs to an unverified account. Subject to a silent 60-second per-account cooldown |
 | `POST /auth/login` | `{email, authKey, tokenMode?}` | `{user, accessToken, refreshToken?}` — `COOKIE` (default) sets an httpOnly refresh cookie; `DIRECT` returns it in the body. `403 code=email_not_verified` while the address is unverified |
 | `POST /auth/refresh` | refresh cookie, or `{refreshToken, tokenMode?}` | new `{accessToken}` (+ rotated refresh) · `403 code=email_not_verified` |
+| `POST /auth/logout` | `{allDevices?}` (body optional) | `204`, empty body, **always with the clearing refresh cookie** (`Max-Age=0`). Default is a *local* sign-out of this browser only. `allDevices: true` revokes every session of the account everywhere and **requires** `Authorization: Bearer <identity token>` (`401` without one) — see [Sessions & logout](#sessions--logout) |
 | `POST /auth/recover/verify` | `{email, recoveryAuthKey}` | `{vault}` for browser-side decryption · `401` on mismatch (aggressive rate limit) |
 | `POST /auth/recover/reset` | `{email, recoveryAuthKey, newAuthKey, newRecoveryAuthKey, vault}` | `{user, tokens}` — atomically replaces the credential hashes + vault and revokes all sessions |
 | `POST /device-codes/exchange` | `{code, deviceName?}` | `{user, accessToken, refreshToken}` (always DIRECT — the TUI). One-time; wrong code → `404`, expired/used → `410`, unverified account → `403 code=email_not_verified` (the code is not consumed) |
@@ -277,11 +278,45 @@ else.
   short-lived (~15 min) and claim-rich (`userId`, `email`); **refresh** tokens are
   long-lived (~30 days) and minimal. Only identity tokens authenticate a request; only
   refresh tokens can be exchanged.
-- Both token types embed the account's `tokenVersion`. A recovery reset bumps it,
-  instantly invalidating every previously issued token.
+- Both token types embed the account's `tokenVersion`. A recovery reset and
+  `POST /auth/logout {allDevices: true}` bump it, instantly invalidating every previously
+  issued token.
+- **There is no server-side token store.** A token is valid as long as it is unexpired, its
+  signature checks out and its `tokenVersion` still matches the account row. Nothing else can
+  end it early — bumping `tokenVersion` is the *only* revocation mechanism there is.
 - HMAC (HS256), signed with `JWT_SECRET_KEY`. Stateless (`SessionCreationPolicy.STATELESS`);
   CSRF is disabled because no cookie is trusted for authentication (the refresh cookie is
   only exchanged at `/auth/refresh`, which re-validates the signed token).
+
+### Sessions & logout
+
+`POST /api/v1/auth/logout` (body `{allDevices?}`, optional) always answers `204` and always
+sends back the clearing refresh cookie. It does **two deliberately different** things:
+
+- **Default (`allDevices` false or absent) — local sign-out.** The response's `Set-Cookie` has
+  `Max-Age=0`, so the browser drops its httpOnly refresh cookie and this browser is signed
+  out. **The refresh token itself stays cryptographically valid until it expires** — the model
+  is stateless and there is nothing to mark it dead server-side. That is the standard
+  stateless-JWT trade-off, not an oversight; the mitigations are the short (~15 min) identity
+  token lifetime and, when it actually matters, `allDevices`. Other devices are untouched.
+- **`allDevices: true` — global revocation.** Bumps `tokenVersion`, which `JwtFilter`
+  re-checks on every request, so **every** issued token dies immediately: this browser, other
+  browsers, **and the paired TUI and mobile clients**, whose only pairing is their tokens.
+  They have to be paired again with a fresh device code. That unpairing is exactly what "sign
+  out everywhere" means, and it is why it is not the default.
+
+**Auth:** the route is not blanket-authenticated, on purpose. A logout has to work when the
+session is already broken — an expired access token is the most common state a user is in when
+they reach for "sign out" — and behind `.authenticated()` the request would `401` and the
+browser would never receive the clearing cookie for a cookie it cannot delete itself. The
+unauthenticated half's entire effect is telling the caller's own browser to drop its own
+cookie: no information, no server state. The privileged half is gated in the controller
+instead — `allDevices` needs a valid identity token (`401` otherwise), so the `tokenVersion`
+bump can only ever hit the caller's own account.
+
+**Clients should still clear their local state regardless of the response** (access token in
+memory, any stored refresh token): the server's answer is a courtesy, not the source of truth
+for a client-side session.
 
 ---
 
