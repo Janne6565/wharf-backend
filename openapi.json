@@ -1524,7 +1524,7 @@
                     "Users"
                 ],
                 "summary": "Get the authenticated account's profile",
-                "description": "Includes hasPassword / hasRecovery / hasVault flags and the account's public key.",
+                "description": "Includes the emailVerified flag, the hasPassword / hasRecovery / hasVault flags and the account's public key.",
                 "operationId": "getCurrentUser",
                 "responses": {
                     "200": {
@@ -2305,6 +2305,10 @@
                     "email": {
                         "type": "string"
                     },
+                    "emailVerified": {
+                        "type": "boolean",
+                        "description": "Whether the email address has been proven with a one-time code"
+                    },
                     "createdAt": {
                         "type": "string",
                         "format": "date-time"
@@ -2679,6 +2683,10 @@
                     },
                     "email": {
                         "type": "string"
+                    },
+                    "emailVerified": {
+                        "type": "boolean",
+                        "description": "Whether the email address has been proven with a one-time code"
                     },
                     "createdAt": {
                         "type": "string",

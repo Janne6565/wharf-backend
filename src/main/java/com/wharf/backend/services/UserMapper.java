@@ -10,6 +10,6 @@ public final class UserMapper {
     }
 
     public static UserDto toDto(UserEntity user) {
-        return new UserDto(user.getId(), user.getEmail(), user.getCreatedAt());
+        return new UserDto(user.getId(), user.getEmail(), user.isEmailVerified(), user.getCreatedAt());
     }
 }

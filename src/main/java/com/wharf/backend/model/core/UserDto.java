@@ -12,6 +12,9 @@ public record UserDto(
 
         String email,
 
+        @Schema(description = "Whether the email address has been proven with a one-time code")
+        boolean emailVerified,
+
         Instant createdAt
 ) {
 }

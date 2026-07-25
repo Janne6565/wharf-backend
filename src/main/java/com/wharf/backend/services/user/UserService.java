@@ -44,6 +44,7 @@ public class UserService {
         return new UserProfileResponse(
                 user.getId(),
                 user.getEmail(),
+                user.isEmailVerified(),
                 user.getCreatedAt(),
                 user.getAuthKeyHash() != null,
                 user.getRecoveryKeyHash() != null,

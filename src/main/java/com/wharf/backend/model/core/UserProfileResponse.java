@@ -17,6 +17,9 @@ public record UserProfileResponse(
 
         String email,
 
+        @Schema(description = "Whether the email address has been proven with a one-time code")
+        boolean emailVerified,
+
         Instant createdAt,
 
         @Schema(description = "Whether a master-password auth key is set (false for a fresh OAuth account)")

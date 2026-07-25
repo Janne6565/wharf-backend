@@ -125,10 +125,13 @@ class EmailVerificationFlowIntegrationTest {
         assertThat(accessToken).isNotBlank();
         assertThat(json(verified).path("refreshToken").asText()).isNotBlank();
         assertThat(json(verified).path("user").path("email").asText()).isEqualTo(email);
+        // The embedded user carries the freshly flipped verification state, not a stale one.
+        assertThat(json(verified).path("user").path("emailVerified").asBoolean()).isTrue();
 
         // The freshly issued session actually works, and the challenge is gone.
         mockMvc.perform(get("/api/v1/users/me").header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.emailVerified").value(true));
         assertThat(userRepository.findByEmail(email).orElseThrow().isEmailVerified()).isTrue();
         assertThat(verificationRepository.findByUserId(
                 userRepository.findByEmail(email).orElseThrow().getId())).isEmpty();

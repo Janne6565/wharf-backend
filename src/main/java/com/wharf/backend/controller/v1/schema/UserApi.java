@@ -33,7 +33,8 @@ public interface UserApi {
     @GetMapping("/me")
     @Operation(operationId = "getCurrentUser",
             summary = "Get the authenticated account's profile",
-            description = "Includes hasPassword / hasRecovery / hasVault flags and the account's public key.",
+            description = "Includes the emailVerified flag, the hasPassword / hasRecovery / hasVault flags "
+                    + "and the account's public key.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
     @ApiResponse(responseCode = "200", description = "Profile returned")
     @ApiResponse(responseCode = "401", description = "Not authenticated")

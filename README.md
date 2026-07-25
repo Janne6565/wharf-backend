@@ -128,7 +128,7 @@ Base path `/api/v1`. Full machine-readable contract in [`openapi.json`](openapi.
 
 | Method & path | Body | Result |
 |---------------|------|--------|
-| `GET /users/me` | — | `{id, email, createdAt, hasPassword, hasRecovery, hasVault}` — the three booleans let the frontend route an OAuth account that has not set a master password / recovery / vault yet |
+| `GET /users/me` | — | `{id, email, emailVerified, createdAt, hasPassword, hasRecovery, hasVault}` — `emailVerified` reflects whether the address was proven with a one-time code; the three `has*` booleans let the frontend route an OAuth account that has not set a master password / recovery / vault yet |
 | `DELETE /users/me` | `{authKey?}` | `204` — **irreversibly** deletes the account and everything keyed to it, **including every project it owns** (see [Account deletion](#account-deletion)). Re-authenticated: `authKey` is **required** if the account has a password (`401` if it does not match, `400 code=auth_key_required` if omitted); an OAuth-only account may send no body at all |
 | `GET /users/me/deletion-preview` | — | `{ownedProjects:[{id, name, otherMemberCount}], otherMemberships}` — read-only; what a `DELETE /users/me` would destroy, so the UI can warn precisely |
 | `POST /auth/setup` | `{recoveryAuthKey, vault, authKey?}` | `204` — one-time onboarding for an OAuth-created account: **atomically** sets the recovery key, the initial vault and (optionally) a password auth key. `409` if a recovery key or vault already exists, or if `authKey` is supplied while a password is already set (rotation stays exclusive to recover/reset) |
