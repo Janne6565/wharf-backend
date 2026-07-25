@@ -462,7 +462,7 @@ Other tunables live in `application.properties`: `jwt.identity-expiration`,
 
 ## Layout
 
-Organised by component type (see `docs/conventions/SPRING_BOOT.md`):
+Organised by component type (see the agents KB `spring-boot` skill):
 
 ```
 configuration/  @ConfigurationProperties + bean config (JWT, CORS, cookie, vault, rate-limit, OpenAPI)
