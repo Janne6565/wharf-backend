@@ -1,7 +1,5 @@
 package com.wharf.backend.services.auth.oauth;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wharf.backend.configuration.OAuthProperties;
 import com.wharf.backend.model.core.OAuthProvider;
 import org.slf4j.Logger;
@@ -12,6 +10,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -105,7 +105,8 @@ class GoogleOAuthProvider implements OAuthProviderClient {
         try {
             byte[] payload = Base64.getUrlDecoder().decode(parts[1]);
             return objectMapper.readTree(new String(payload, StandardCharsets.UTF_8));
-        } catch (RuntimeException | java.io.IOException ex) {
+        } catch (RuntimeException ex) {
+            // Jackson 3 reports parse failures as unchecked JacksonExceptions.
             log.error("Failed to parse Google id_token claims", ex);
             throw new OAuthCallbackException(OAuthErrorCode.PROVIDER_ERROR, ex);
         }
@@ -113,10 +114,12 @@ class GoogleOAuthProvider implements OAuthProviderClient {
 
     private String text(JsonNode node, String field) {
         JsonNode value = node.get(field);
-        if (value == null || value.isNull()) {
+        // Jackson 3 refuses to coerce object/array nodes to a String (Jackson 2 yielded an
+        // empty one); treat such a malformed claim as absent, exactly as before.
+        if (value == null || value.isNull() || value.isContainer()) {
             return null;
         }
-        String text = value.asText().trim();
+        String text = value.asString().trim();
         return text.isEmpty() ? null : text;
     }
 }

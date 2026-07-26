@@ -5,8 +5,8 @@ import com.wharf.backend.client.MailServiceClient;
 import com.wharf.backend.client.NoopMailClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -34,11 +34,11 @@ public class MailClientConfig {
             log.info("Mail delivery disabled (no API key configured); using no-op mail client");
             return new NoopMailClient();
         }
-        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
+        HttpClientSettings settings = HttpClientSettings.defaults()
                 .withConnectTimeout(CONNECT_TIMEOUT)
                 .withReadTimeout(READ_TIMEOUT);
         RestClient restClient = builder
-                .requestFactory(ClientHttpRequestFactories.get(settings))
+                .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(settings))
                 .build();
         log.info("Mail delivery enabled via {}", properties.baseUrl());
         return new MailServiceClient(restClient, properties.baseUrl(), properties.apiKey());

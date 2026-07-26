@@ -46,8 +46,8 @@
                 "summary": "Fetch the stored vault blob and its version",
                 "operationId": "getVault",
                 "responses": {
-                    "404": {
-                        "description": "No vault for this account",
+                    "200": {
+                        "description": "Vault returned",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -66,8 +66,8 @@
                             }
                         }
                     },
-                    "200": {
-                        "description": "Vault returned",
+                    "404": {
+                        "description": "No vault for this account",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -167,17 +167,17 @@
                     "required": true
                 },
                 "responses": {
-                    "400": {
-                        "description": "Key is not 32 bytes"
-                    },
-                    "409": {
-                        "description": "A key already exists and rotate was not set"
-                    },
                     "204": {
                         "description": "Public key stored"
                     },
+                    "400": {
+                        "description": "Key is not 32 bytes"
+                    },
                     "401": {
                         "description": "Not authenticated"
+                    },
+                    "409": {
+                        "description": "A key already exists and rotate was not set"
                     }
                 },
                 "security": [
@@ -206,8 +206,8 @@
                     }
                 ],
                 "responses": {
-                    "404": {
-                        "description": "Project not found or caller is not a member",
+                    "200": {
+                        "description": "Vault returned",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -226,8 +226,8 @@
                             }
                         }
                     },
-                    "200": {
-                        "description": "Vault returned",
+                    "404": {
+                        "description": "Project not found or caller is not a member",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -271,16 +271,6 @@
                     "required": true
                 },
                 "responses": {
-                    "403": {
-                        "description": "Caller holds no wrapped key yet",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/VaultUpdateResponse"
-                                }
-                            }
-                        }
-                    },
                     "200": {
                         "description": "Vault updated",
                         "content": {
@@ -291,8 +281,8 @@
                             }
                         }
                     },
-                    "404": {
-                        "description": "Project not found or caller is not a member",
+                    "401": {
+                        "description": "Not authenticated",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -301,8 +291,18 @@
                             }
                         }
                     },
-                    "401": {
-                        "description": "Not authenticated",
+                    "403": {
+                        "description": "Caller holds no wrapped key yet",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -358,14 +358,14 @@
                     }
                 ],
                 "responses": {
-                    "404": {
-                        "description": "Invite not found or not addressed to the caller"
-                    },
                     "204": {
                         "description": "Invite declined"
                     },
                     "401": {
                         "description": "Not authenticated"
+                    },
+                    "404": {
+                        "description": "Invite not found or not addressed to the caller"
                     }
                 },
                 "security": [
@@ -394,8 +394,8 @@
                     }
                 ],
                 "responses": {
-                    "404": {
-                        "description": "Invite not found or not addressed to the caller",
+                    "200": {
+                        "description": "Joined; returns the project summary",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -414,8 +414,8 @@
                             }
                         }
                     },
-                    "200": {
-                        "description": "Joined; returns the project summary",
+                    "404": {
+                        "description": "Invite not found or not addressed to the caller",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -450,8 +450,8 @@
                 "summary": "List the caller's projects",
                 "operationId": "listProjects",
                 "responses": {
-                    "401": {
-                        "description": "Not authenticated",
+                    "200": {
+                        "description": "Projects returned",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -463,8 +463,8 @@
                             }
                         }
                     },
-                    "200": {
-                        "description": "Projects returned",
+                    "401": {
+                        "description": "Not authenticated",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -510,6 +510,16 @@
                             }
                         }
                     },
+                    "400": {
+                        "description": "Invalid vault or wrapped key",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
                     "401": {
                         "description": "Not authenticated",
                         "content": {
@@ -522,16 +532,6 @@
                     },
                     "412": {
                         "description": "Caller has not published a public key",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Project"
-                                }
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid vault or wrapped key",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -587,8 +587,18 @@
                             }
                         }
                     },
-                    "404": {
-                        "description": "Project not found or caller is not a member",
+                    "400": {
+                        "description": "Invalid removal or wrapped key",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -607,18 +617,8 @@
                             }
                         }
                     },
-                    "400": {
-                        "description": "Invalid removal or wrapped key",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/VaultUpdateResponse"
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
+                    "404": {
+                        "description": "Project not found or caller is not a member",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -683,11 +683,14 @@
                     "required": true
                 },
                 "responses": {
+                    "204": {
+                        "description": "Key stored"
+                    },
                     "400": {
                         "description": "Wrapped key is not 80 bytes"
                     },
-                    "409": {
-                        "description": "Vault version has moved on (stale DEK)"
+                    "401": {
+                        "description": "Not authenticated"
                     },
                     "403": {
                         "description": "Caller is not an admin"
@@ -695,11 +698,8 @@
                     "404": {
                         "description": "Project/caller/target member not found"
                     },
-                    "401": {
-                        "description": "Not authenticated"
-                    },
-                    "204": {
-                        "description": "Key stored"
+                    "409": {
+                        "description": "Vault version has moved on (stale DEK)"
                     }
                 },
                 "security": [
@@ -748,6 +748,16 @@
                             }
                         }
                     },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProjectInvite"
+                                }
+                            }
+                        }
+                    },
                     "403": {
                         "description": "Caller is not an admin",
                         "content": {
@@ -760,16 +770,6 @@
                     },
                     "404": {
                         "description": "Project not found or caller is not a member",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/ProjectInvite"
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -804,8 +804,8 @@
                 "summary": "Issue a pairing code for the calling account",
                 "operationId": "issueDeviceCode",
                 "responses": {
-                    "401": {
-                        "description": "Not authenticated",
+                    "200": {
+                        "description": "Code issued",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -814,8 +814,8 @@
                             }
                         }
                     },
-                    "200": {
-                        "description": "Code issued",
+                    "401": {
+                        "description": "Not authenticated",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -860,8 +860,8 @@
                             }
                         }
                     },
-                    "410": {
-                        "description": "Code expired or already used",
+                    "404": {
+                        "description": "Unknown code",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -870,8 +870,8 @@
                             }
                         }
                     },
-                    "404": {
-                        "description": "Unknown code",
+                    "410": {
+                        "description": "Code expired or already used",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -947,14 +947,14 @@
                     "204": {
                         "description": "Account set up"
                     },
-                    "409": {
-                        "description": "Recovery key or vault already exists, or password already set"
-                    },
                     "400": {
                         "description": "Invalid vault payload"
                     },
                     "401": {
                         "description": "Not authenticated"
+                    },
+                    "409": {
+                        "description": "Recovery key or vault already exists, or password already set"
                     }
                 },
                 "security": [
@@ -1049,16 +1049,6 @@
                     }
                 },
                 "responses": {
-                    "403": {
-                        "description": "Email address is not verified (code: email_not_verified)",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/AccessTokenResponse"
-                                }
-                            }
-                        }
-                    },
                     "200": {
                         "description": "New access token issued",
                         "content": {
@@ -1071,6 +1061,16 @@
                     },
                     "401": {
                         "description": "Missing, invalid or revoked refresh token",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AccessTokenResponse"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Email address is not verified (code: email_not_verified)",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1100,8 +1100,8 @@
                     "required": true
                 },
                 "responses": {
-                    "401": {
-                        "description": "Recovery code does not match",
+                    "200": {
+                        "description": "Recovery code valid; vault returned",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1110,8 +1110,8 @@
                             }
                         }
                     },
-                    "200": {
-                        "description": "Recovery code valid; vault returned",
+                    "401": {
+                        "description": "Recovery code does not match",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1194,16 +1194,6 @@
                             }
                         }
                     },
-                    "409": {
-                        "description": "No password is set for this account",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/VaultUpdateResponse"
-                                }
-                            }
-                        }
-                    },
                     "400": {
                         "description": "Invalid vault payload",
                         "content": {
@@ -1216,6 +1206,16 @@
                     },
                     "401": {
                         "description": "Not authenticated, or the current auth key does not match",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VaultUpdateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "No password is set for this account",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1250,11 +1250,11 @@
                     }
                 },
                 "responses": {
-                    "401": {
-                        "description": "allDevices was requested without a valid identity token"
-                    },
                     "204": {
                         "description": "Signed out; refresh cookie cleared"
+                    },
+                    "401": {
+                        "description": "allDevices was requested without a valid identity token"
                     }
                 },
                 "security": [
@@ -1283,16 +1283,6 @@
                     "required": true
                 },
                 "responses": {
-                    "403": {
-                        "description": "Email address is not verified (code: email_not_verified)",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/SessionResponse"
-                                }
-                            }
-                        }
-                    },
                     "200": {
                         "description": "Authenticated",
                         "content": {
@@ -1305,6 +1295,16 @@
                     },
                     "401": {
                         "description": "Invalid credentials",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SessionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Email address is not verified (code: email_not_verified)",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1335,16 +1335,6 @@
                     }
                 ],
                 "responses": {
-                    "404": {
-                        "description": "Project not found or caller is not a member",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Project"
-                                }
-                            }
-                        }
-                    },
                     "200": {
                         "description": "Project returned",
                         "content": {
@@ -1357,6 +1347,16 @@
                     },
                     "401": {
                         "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Project"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Project not found or caller is not a member",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1393,14 +1393,14 @@
                     "204": {
                         "description": "Project deleted"
                     },
+                    "401": {
+                        "description": "Not authenticated"
+                    },
                     "403": {
                         "description": "Caller is not the owner"
                     },
                     "404": {
                         "description": "Project not found or caller is not a member"
-                    },
-                    "401": {
-                        "description": "Not authenticated"
                     }
                 },
                 "security": [
@@ -1440,14 +1440,14 @@
                     "200": {
                         "description": "Project updated"
                     },
+                    "401": {
+                        "description": "Not authenticated"
+                    },
                     "403": {
                         "description": "Caller is not an admin"
                     },
                     "404": {
                         "description": "Project not found or caller is not a member"
-                    },
-                    "401": {
-                        "description": "Not authenticated"
                     }
                 },
                 "security": [
@@ -1495,8 +1495,8 @@
                     "required": true
                 },
                 "responses": {
-                    "403": {
-                        "description": "Caller is not the owner"
+                    "204": {
+                        "description": "Role updated"
                     },
                     "400": {
                         "description": "Owner cannot demote themselves without a transfer"
@@ -1504,8 +1504,8 @@
                     "401": {
                         "description": "Not authenticated"
                     },
-                    "204": {
-                        "description": "Role updated"
+                    "403": {
+                        "description": "Caller is not the owner"
                     },
                     "404": {
                         "description": "Project or target member not found"
@@ -1571,14 +1571,14 @@
                     }
                 },
                 "responses": {
-                    "401": {
-                        "description": "Not authenticated, or the supplied authKey does not match"
+                    "204": {
+                        "description": "Account deleted"
                     },
                     "400": {
                         "description": "The account has a password but no authKey was supplied (code: auth_key_required)"
                     },
-                    "204": {
-                        "description": "Account deleted"
+                    "401": {
+                        "description": "Not authenticated, or the supplied authKey does not match"
                     }
                 },
                 "security": [
@@ -1699,6 +1699,19 @@
                             }
                         }
                     },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingKey"
+                                    }
+                                }
+                            }
+                        }
+                    },
                     "403": {
                         "description": "Caller is not an admin",
                         "content": {
@@ -1714,19 +1727,6 @@
                     },
                     "404": {
                         "description": "Project not found or caller is not a member",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/components/schemas/PendingKey"
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
                         "content": {
                             "*/*": {
                                 "schema": {
@@ -1867,17 +1867,17 @@
                     }
                 ],
                 "responses": {
-                    "404": {
-                        "description": "Project not found or caller is not a member"
+                    "204": {
+                        "description": "Left the project"
                     },
                     "401": {
                         "description": "Not authenticated"
                     },
+                    "404": {
+                        "description": "Project not found or caller is not a member"
+                    },
                     "409": {
                         "description": "Owner cannot leave without transferring ownership"
-                    },
-                    "204": {
-                        "description": "Left the project"
                     }
                 },
                 "security": [
@@ -1918,11 +1918,11 @@
                     "204": {
                         "description": "Invite revoked"
                     },
-                    "403": {
-                        "description": "Caller is not an admin"
-                    },
                     "401": {
                         "description": "Not authenticated"
+                    },
+                    "403": {
+                        "description": "Caller is not an admin"
                     },
                     "404": {
                         "description": "Project or invite not found"
@@ -1979,6 +1979,7 @@
                 "type": "object",
                 "properties": {
                     "publicKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "Base64-encoded X25519 public key (exactly 32 bytes)"
                     },
@@ -2057,6 +2058,7 @@
                         "description": "Base64-encoded ciphertext project vault blob"
                     },
                     "wrappedDek": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "Base64-encoded project DEK sealed to the owner's public key (exactly 80 bytes)"
                     }
@@ -2205,6 +2207,7 @@
                         "format": "uuid"
                     },
                     "wrappedDek": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "Base64-encoded DEK sealed to that member's public key (exactly 80 bytes)"
                     }
@@ -2218,6 +2221,7 @@
                 "type": "object",
                 "properties": {
                     "wrappedDek": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "Base64-encoded project DEK sealed to the target member's public key (exactly 80 bytes)"
                     },
@@ -2239,7 +2243,8 @@
                         "maxLength": 320,
                         "minLength": 0,
                         "type": "string",
-                        "description": "Email address to invite (lowercased server-side)"
+                        "description": "Email address to invite (lowercased server-side)",
+                        "format": "email"
                     }
                 },
                 "description": "Invite an email address to a project"
@@ -2266,6 +2271,7 @@
                 "type": "object",
                 "properties": {
                     "code": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "The pairing code; dashes and case are normalised",
                         "example": "K7PQ-M2XR"
@@ -2324,9 +2330,12 @@
                 "type": "object",
                 "properties": {
                     "email": {
-                        "type": "string"
+                        "minLength": 1,
+                        "type": "string",
+                        "format": "email"
                     },
                     "code": {
+                        "minLength": 1,
                         "pattern": "\\d{6}",
                         "type": "string",
                         "description": "The 6-digit code from the verification email"
@@ -2350,6 +2359,7 @@
                 "type": "object",
                 "properties": {
                     "recoveryAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "base64 HKDF-derived recovery authentication key for the freshly generated recovery code"
                     },
@@ -2374,7 +2384,9 @@
                 "type": "object",
                 "properties": {
                     "email": {
-                        "type": "string"
+                        "minLength": 1,
+                        "type": "string",
+                        "format": "email"
                     }
                 },
                 "description": "Ask for a fresh verification code. The response is always 202, whether or not the address belongs to an account, so it cannot be used to probe registrations."
@@ -2389,13 +2401,17 @@
                 "type": "object",
                 "properties": {
                     "email": {
-                        "type": "string"
+                        "minLength": 1,
+                        "type": "string",
+                        "format": "email"
                     },
                     "authKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "base64 HKDF-derived authentication key (never the password)"
                     },
                     "recoveryAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "base64 HKDF-derived recovery authentication key"
                     },
@@ -2472,9 +2488,12 @@
                 "type": "object",
                 "properties": {
                     "email": {
-                        "type": "string"
+                        "minLength": 1,
+                        "type": "string",
+                        "format": "email"
                     },
                     "recoveryAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "base64 HKDF-derived recovery authentication key"
                     }
@@ -2502,17 +2521,22 @@
                 "type": "object",
                 "properties": {
                     "email": {
-                        "type": "string"
+                        "minLength": 1,
+                        "type": "string",
+                        "format": "email"
                     },
                     "recoveryAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "The current recovery authentication key (proves ownership)"
                     },
                     "newAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "New base64 authentication key derived from the new password"
                     },
                     "newRecoveryAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "New base64 recovery authentication key for the freshly issued recovery code"
                     },
@@ -2569,10 +2593,12 @@
                 "type": "object",
                 "properties": {
                     "currentAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "The current base64 authentication key (proves the caller knows the current password)"
                     },
                     "newAuthKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "New base64 authentication key derived from the new password"
                     },
@@ -2604,9 +2630,12 @@
                 "type": "object",
                 "properties": {
                     "email": {
-                        "type": "string"
+                        "minLength": 1,
+                        "type": "string",
+                        "format": "email"
                     },
                     "authKey": {
+                        "minLength": 1,
                         "type": "string",
                         "description": "base64 HKDF-derived authentication key"
                     },

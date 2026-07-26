@@ -1,7 +1,5 @@
 package com.wharf.backend.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wharf.backend.configuration.Profiles;
 import com.wharf.backend.entity.EmailVerificationEntity;
 import com.wharf.backend.repository.EmailVerificationRepository;
@@ -10,14 +8,16 @@ import com.wharf.backend.services.auth.EmailVerificationNotificationService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -55,7 +55,7 @@ class EmailVerificationFlowIntegrationTest {
     @Autowired
     private EmailVerificationRepository verificationRepository;
 
-    @MockBean
+    @MockitoBean
     private EmailVerificationNotificationService notificationService;
 
     private static final String AUTH_KEY = "auth-key-v1-base64==";

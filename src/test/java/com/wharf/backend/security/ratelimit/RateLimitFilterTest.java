@@ -1,6 +1,5 @@
 package com.wharf.backend.security.ratelimit;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wharf.backend.configuration.RateLimitProperties;
 import com.wharf.backend.security.ProblemDetailWriter;
 import jakarta.servlet.FilterChain;
@@ -10,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 

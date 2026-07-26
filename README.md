@@ -8,7 +8,7 @@ The service is **zero-knowledge**: it only ever stores ciphertext vault blobs an
 hashes of client-derived credential keys. **It never sees your password or the plaintext
 contents of your vault.**
 
-Stack: Java 21, Spring Boot 3.3 (Web MVC, Security, Data JPA), Flyway, PostgreSQL (prod) /
+Stack: Java 21, Spring Boot 4.0 (Web MVC, Security, Data JPA), Flyway, PostgreSQL (prod) /
 H2 (dev & tests), self-issued HMAC JWT via jjwt, Bucket4j rate limiting, springdoc-openapi.
 
 ---
@@ -437,10 +437,17 @@ Or build the container image: `docker build -t wharf-backend .`
 ### Regenerating `openapi.json`
 
 ```bash
-mvn -q -DskipTests package
-java -jar target/wharf-backend-*.jar --spring.profiles.active=dev --server.port=18080 &
+mvn -q spring-boot:run -Dspring-boot.run.arguments="--spring.profiles.active=dev --server.port=18080" &
 curl -s http://localhost:18080/v3/api-docs | python3 -m json.tool > openapi.json
 ```
+
+The spec must be generated through `spring-boot:run`, not from the packaged jar: H2 is a
+test-scope dependency (it is deliberately kept out of the production fat jar), and the
+`dev` profile needs it. The Boot plugin's `useTestClasspath` makes it available to the
+run goal.
+
+The emitted document is pinned to OpenAPI 3.0.1 via `springdoc.api-docs.version` — see the
+comment in `application.properties`.
 
 ---
 

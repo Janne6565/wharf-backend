@@ -1,6 +1,5 @@
 package com.wharf.backend.integration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wharf.backend.configuration.Profiles;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.core.DeviceCodeResponse;
@@ -10,12 +9,13 @@ import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.services.devicecode.DeviceCodeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.UUID;
