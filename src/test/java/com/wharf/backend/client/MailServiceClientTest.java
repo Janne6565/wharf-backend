@@ -1,5 +1,6 @@
 package com.wharf.backend.client;
 
+import com.wharf.backend.services.mail.MailContent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -20,6 +21,9 @@ class MailServiceClientTest {
     private static final String BASE_URL = "https://mail-service.jannekeipert.de";
     private static final String API_KEY = "mk_11111111-1111-1111-1111-111111111111_secret";
 
+    private static final MailContent CONTENT =
+            new MailContent("Hello", "<p>Body html</p>", "Body text");
+
     private MockRestServiceServer server;
     private MailServiceClient client;
 
@@ -38,11 +42,14 @@ class MailServiceClientTest {
                 .andExpect(content().contentTypeCompatibleWith("application/json"))
                 .andExpect(jsonPath("$.recipient").value("invitee@acme.io"))
                 .andExpect(jsonPath("$.subject").value("Hello"))
-                .andExpect(jsonPath("$.body").value("Body text"))
-                .andExpect(jsonPath("$.enableHtml").value(false))
+                .andExpect(jsonPath("$.body").value("<p>Body html</p>"))
+                .andExpect(jsonPath("$.enableHtml").value(true))
+                // The plain-text alternative rides along in its own field; the mail service
+                // assembles the two into one multipart/alternative message.
+                .andExpect(jsonPath("$.textBody").value("Body text"))
                 .andRespond(withSuccess());
 
-        client.send("invitee@acme.io", "Hello", "Body text", false);
+        client.send("invitee@acme.io", CONTENT);
 
         server.verify();
     }
@@ -52,7 +59,7 @@ class MailServiceClientTest {
         server.expect(requestTo(BASE_URL + "/api/v1/send"))
                 .andRespond(withServerError());
 
-        assertThatCode(() -> client.send("invitee@acme.io", "Hello", "Body text", false))
+        assertThatCode(() -> client.send("invitee@acme.io", CONTENT))
                 .doesNotThrowAnyException();
 
         server.verify();

@@ -1,5 +1,6 @@
 package com.wharf.backend.client;
 
+import com.wharf.backend.services.mail.MailContent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -33,13 +34,13 @@ public class MailServiceClient implements MailPort {
     }
 
     @Override
-    public void send(String recipient, String subject, String body, boolean html) {
+    public void send(String recipient, MailContent content) {
         try {
             restClient.post()
                     .uri(sendUri)
                     .header("Authorization", "Bearer " + apiKey)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new SendRequest(recipient, subject, body, html))
+                    .body(new SendRequest(recipient, content.subject(), content.html(), true, content.text()))
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientResponseException ex) {
@@ -53,7 +54,14 @@ public class MailServiceClient implements MailPort {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
-    /** JSON payload the Mail Manager {@code /api/v1/send} endpoint expects. */
-    record SendRequest(String recipient, String subject, String body, boolean enableHtml) {
+    /**
+     * JSON payload the Mail Manager {@code /api/v1/send} endpoint expects.
+     *
+     * <p>{@code body} carries the HTML and {@code textBody} the plain-text alternative, which
+     * the service assembles into a {@code multipart/alternative} message. {@code textBody} is
+     * an optional field there: an older deployment that does not know it ignores the extra
+     * key and sends the HTML part alone, so this degrades rather than breaks.
+     */
+    record SendRequest(String recipient, String subject, String body, boolean enableHtml, String textBody) {
     }
 }

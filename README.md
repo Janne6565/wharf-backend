@@ -243,6 +243,75 @@ email string. So:
 - Existing accounts were backfilled as verified by the `V6` migration; the column default
   flips to `false` for everything created afterwards.
 
+### Notifications
+
+All outbound mail goes through the `MailPort` → mail-service (`POST /api/v1/send`, scoped
+API key). No key configured ⇒ a `NoopMailClient` is wired in and the feature degrades to a
+debug log, so local dev and tests need no external service. Every send is `@Async` on a
+dedicated executor and **best-effort**: a failure is logged and swallowed, never propagated
+to the operation that triggered it.
+
+Templates live in `services/mail/`. `MailTemplate` renders one shell — table layout, inline
+styles, 600 px, no external CSS/JS/SVG/webfonts — to **both** HTML and plain text in a single
+pass, and mail-service sends them as `multipart/alternative`. Severity is carried by colour
+and words only (`MailSeverity`), because Gmail strips SVG and Outlook's Word engine cannot
+draw it. Everything interpolated is HTML-escaped: project names and device labels are chosen
+by other users and land in a third party's inbox.
+
+| # | Mail | Trigger | Severity |
+|---|------|---------|----------|
+| 1 | Verification code | register / resend | — (no link at all) |
+| 2 | Project invite | `POST /projects/{id}/invites` | neutral |
+| 3 | Recovery code used | `POST /auth/recover/reset` | **danger** |
+| 4 | Password changed | `POST /auth/password` | warning |
+| 5 | Password set | `POST /auth/setup` *with* an authKey | warning |
+| 6 | Device paired | `POST /device-codes/exchange` | warning |
+| 7 | Sign-in provider linked | OAuth auto-link **into an existing account** only | warning |
+| 8 | Account deleted | `DELETE /users/me` | **danger**, no CTA |
+| 9 | Invite accepted / declined | invitee answers → to the inviter | neutral |
+| 10 | Project access granted | first `POST /projects/{id}/members/{userId}/key` | neutral |
+| 11 | Removed / role changed | `POST /projects/{id}/rotate` with `removeUserId`, `PATCH …/members/{userId}` | neutral, no CTA on removal |
+| 12 | Project deleted | `DELETE /projects/{id}`, and owner account deletion | neutral |
+
+Security notices (3–8) state that they cannot be turned off and carry no unsubscribe;
+collaboration mail (2, 9–12) carries one notification-settings link, pointing at
+`/account/notifications`. **No mail offers a password reset** — there is none by construction,
+and one that implied otherwise would be indistinguishable from phishing.
+
+#### Preferences
+
+Collaboration mail is opt-out per notification; security notices are not. That asymmetry is
+enforced structurally rather than by a check: `NotificationPreference` has a constant only for
+the seven collaboration keys, `V7` added a column only for those seven, and
+`PATCH /users/me/notifications` **rejects** any key it does not know — so naming a security
+notice fails exactly like a typo instead of silently answering 200. There is no value anywhere
+in the schema that can switch a security notice off.
+
+| Endpoint | Behaviour |
+|----------|-----------|
+| `GET /users/me/notifications` | all seven keys, always |
+| `PATCH /users/me/notifications` | partial — only the keys present change; every key validated before any is applied, so one bad key changes nothing. Returns the full set |
+
+Keys: `projectInvite`, `inviteAccepted`, `inviteDeclined`, `projectAccessGranted`,
+`projectAccessRemoved`, `roleChanged`, `projectDeleted` — all default to `true`, and `V7`
+backfills every existing account as opted in, so nothing silently goes quiet.
+
+The check runs in the notification services (`InviteNotificationService`,
+`ProjectNotificationService`) rather than at their call sites, so a notification added later
+cannot bypass it by forgetting to ask. A recipient with **no Wharf account** counts as opted
+in: a project invite is the one mail that can reach a stranger, and refusing to send there
+would make it impossible to invite anyone new.
+
+Notices 3–8 report `TIME / IP / CLIENT`. These are read off the live request by
+`ActorContextResolver` **on the request thread** and passed into the async method as a value —
+they are never persisted. That is deliberate: a zero-knowledge server should not accumulate a
+log of where its users sign in from. The cost is that there is no "recent activity" screen to
+check afterwards, so the mail is the whole record. The IP is resolved by the same
+`ClientIpResolver` the rate limiter uses, so `X-Forwarded-For` is trusted only behind the
+proxy — a notice naming a spoofed address would be worse than one naming none. Location is
+omitted entirely (no GeoIP), and any row whose value is unknown drops out rather than
+rendering blank.
+
 ### Account deletion
 
 `DELETE /api/v1/users/me` erases the account for good. The account is always taken from the
@@ -460,10 +529,13 @@ comment in `application.properties`.
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/wharf` / `wharf` / _(required)_ | prod profile only; `DB_PASSWORD` has no default and must be supplied |
 | `CORS_ALLOWED_ORIGINS` | `https://wharf.sh` (prod) / `http://localhost:5173` (dev) | comma-separated (`app.cors.allowed-origins`) |
 | `OAUTH_PUBLIC_BASE_URL`, `OAUTH_MOBILE_REDIRECT_URI`, `OAUTH_{GOOGLE,GITHUB}_CLIENT_{ID,SECRET}` | empty (providers disabled); mobile redirect `wharf://oauth` | OAuth social login — see [OAuth social login](#oauth-social-login) |
+| `MAIL_SERVICE_API_KEY` | empty (mail disabled, no-op client) | mail-service key, format `mk_<uuid>_<secret>`, scope `SEND` — see [Notifications](#notifications) |
+| `WHARF_APP_BASE_URL` | `https://wharf.jannekeipert.de` (prod) / `http://localhost:5173` (dev) | origin every link in an email is built from; mail links must be absolute and point at the deployment that sent them |
+| `WHARF_SENDING_DOMAIN` | `wharf.jannekeipert.de` | bare domain shown as the last line of every email footer |
 
 Other tunables live in `application.properties`: `jwt.identity-expiration`,
 `jwt.refresh-expiration`, `auth.cookie.*`, `vault.max-size-bytes`, `device-code.ttl`,
-`rate-limit.*`.
+`rate-limit.*`, `wharf.mail.*`.
 
 ---
 
@@ -478,8 +550,8 @@ entity/         UserEntity, VaultEntity, DeviceCodeEntity, Project{,Vault,Member
 model/          action (request DTOs), core (response DTOs + TokenMode + ProjectRole), exception (BaseException + domain)
 repository/     Spring Data JPA repositories
 security/       SecurityConfig, JwtFilter, JwtService, RefreshCookieFactory, ratelimit/
-services/       auth/ (incl. oauth/), vault/ (incl. VaultBlobCodec), project/ (project, vault, invite, access), devicecode/, user/
-resources/db/migration/  V1__init.sql … V4__projects.sql (Flyway)
+services/       auth/ (incl. oauth/), vault/ (incl. VaultBlobCodec), project/ (project, vault, invite, access), devicecode/, user/, mail/ (MailTemplate renderer + ActorContext)
+resources/db/migration/  V1__init.sql … V7__notification_preferences.sql (Flyway)
 ```
 
 ## Testing

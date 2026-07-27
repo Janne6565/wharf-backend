@@ -27,6 +27,7 @@ import com.wharf.backend.repository.ProjectRepository;
 import com.wharf.backend.repository.ProjectVaultRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.services.vault.VaultBlobCodec;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,6 +46,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,6 +64,11 @@ class ProjectServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private ProjectNotificationService notifications;
+    @Mock
+    private ActorContextResolver actorContextResolver;
+
     private ProjectService service;
 
     private final UUID projectId = UUID.randomUUID();
@@ -75,7 +83,7 @@ class ProjectServiceTest {
         ProjectAccessService access = new ProjectAccessService(memberRepository);
         VaultBlobCodec codec = new VaultBlobCodec(new VaultProperties(1_048_576));
         service = new ProjectService(projectRepository, projectVaultRepository, memberRepository,
-                inviteRepository, userRepository, access, codec);
+                inviteRepository, userRepository, access, codec, notifications, actorContextResolver);
     }
 
     private static String b64(int bytes) {
@@ -157,6 +165,10 @@ class ProjectServiceTest {
     }
 
     // ---- rotate -------------------------------------------------------------------------
+
+    private ProjectEntity project() {
+        return ProjectEntity.builder().id(projectId).name("atlas").createdAt(Instant.now()).build();
+    }
 
     private ProjectVaultEntity vault(long version) {
         return ProjectVaultEntity.builder().projectId(projectId).blob(new byte[10])
@@ -278,6 +290,93 @@ class ProjectServiceTest {
         assertThatThrownBy(() -> service.submitMemberKey(projectId, adminId, memberId,
                 new SubmitWrappedKeyRequest(b64(79), 2L)))
                 .isInstanceOf(com.wharf.backend.model.exception.InvalidWrappedKeyException.class);
+    }
+
+    /**
+     * Accepting an invite joins a member unkeyed, so this is the moment their access starts
+     * working — and the only moment worth telling them about. Re-keying after a rotation goes
+     * through the same endpoint, and mailing the whole team on every rotation would train
+     * everyone to ignore the one mail that means something.
+     */
+    @Test
+    void submitMemberKey_notifiesOnTheFirstKeyOnly() {
+        stubMember(adminId, member(adminId, ProjectRole.ADMIN, true));
+        when(projectVaultRepository.findAndLockByProjectId(projectId)).thenReturn(Optional.of(vault(2)));
+        ProjectMemberEntity target = member(memberId, ProjectRole.MEMBER, false);
+        when(memberRepository.findByProjectIdAndUserId(projectId, memberId)).thenReturn(Optional.of(target));
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project()));
+        when(userRepository.findById(any())).thenReturn(Optional.of(
+                UserEntity.builder().id(memberId).email("member@acme.io").build()));
+
+        service.submitMemberKey(projectId, adminId, memberId, new SubmitWrappedKeyRequest(b64(80), 2L));
+
+        verify(notifications).notifyAccessGranted(eq("member@acme.io"), any(), eq(projectId),
+                eq(ProjectRole.MEMBER), any());
+    }
+
+    @Test
+    void submitMemberKey_reKeyingAnAlreadyKeyedMember_notifiesNobody() {
+        stubMember(adminId, member(adminId, ProjectRole.ADMIN, true));
+        when(projectVaultRepository.findAndLockByProjectId(projectId)).thenReturn(Optional.of(vault(2)));
+        ProjectMemberEntity target = member(memberId, ProjectRole.MEMBER, true);
+        when(memberRepository.findByProjectIdAndUserId(projectId, memberId)).thenReturn(Optional.of(target));
+
+        service.submitMemberKey(projectId, adminId, memberId, new SubmitWrappedKeyRequest(b64(80), 2L));
+
+        verifyNoInteractions(notifications);
+    }
+
+    /**
+     * Removal is only expressible as a rotation, so without this mail an evicted member just
+     * watches the project's hosts disappear on their next sync with no explanation.
+     */
+    @Test
+    void rotate_removingAMember_tellsThemTheyLostAccess() {
+        ProjectMemberEntity owner = member(ownerId, ProjectRole.OWNER, true);
+        ProjectMemberEntity removed = member(memberId, ProjectRole.MEMBER, true);
+        stubMember(ownerId, owner);
+        when(projectVaultRepository.findAndLockByProjectId(projectId)).thenReturn(Optional.of(vault(4)));
+        when(memberRepository.findByProjectId(projectId)).thenReturn(new ArrayList<>(List.of(owner, removed)));
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project()));
+        when(userRepository.findById(memberId)).thenReturn(Optional.of(
+                UserEntity.builder().id(memberId).email("member@acme.io").build()));
+        when(userRepository.findById(ownerId)).thenReturn(Optional.of(
+                UserEntity.builder().id(ownerId).email("owner@acme.io").build()));
+
+        service.rotate(projectId, ownerId, new RotateProjectRequest(memberId, b64(64), 4L,
+                List.of(new WrappedKeyEntry(ownerId, b64(80)))));
+
+        verify(notifications).notifyRemoved(eq("member@acme.io"), any(), eq("owner@acme.io"), any());
+    }
+
+    @Test
+    void rotate_withoutRemoval_notifiesNobody() {
+        ProjectMemberEntity owner = member(ownerId, ProjectRole.OWNER, true);
+        stubMember(ownerId, owner);
+        when(projectVaultRepository.findAndLockByProjectId(projectId)).thenReturn(Optional.of(vault(4)));
+        when(memberRepository.findByProjectId(projectId)).thenReturn(new ArrayList<>(List.of(owner)));
+
+        service.rotate(projectId, ownerId, new RotateProjectRequest(null, b64(64), 4L,
+                List.of(new WrappedKeyEntry(ownerId, b64(80)))));
+
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void deleteProject_tellsEveryOtherMemberButNotTheOwnerWhoDidIt() {
+        stubMember(ownerId, member(ownerId, ProjectRole.OWNER, true));
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project()));
+        when(memberRepository.findByProjectId(projectId)).thenReturn(List.of(
+                member(ownerId, ProjectRole.OWNER, true), member(memberId, ProjectRole.MEMBER, true)));
+        when(userRepository.findAllById(List.of(memberId))).thenReturn(List.of(
+                UserEntity.builder().id(memberId).email("member@acme.io").build()));
+        when(userRepository.findById(ownerId)).thenReturn(Optional.of(
+                UserEntity.builder().id(ownerId).email("owner@acme.io").build()));
+
+        service.deleteProject(projectId, ownerId);
+
+        verify(notifications).notifyProjectDeleted(eq("member@acme.io"), any(), eq("owner@acme.io"), any());
+        verify(notifications, never()).notifyProjectDeleted(eq("owner@acme.io"), any(), any(), any());
     }
 
     // ---- role change / transfer ---------------------------------------------------------

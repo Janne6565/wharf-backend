@@ -28,6 +28,8 @@ import com.wharf.backend.repository.ProjectMemberRepository;
 import com.wharf.backend.repository.ProjectRepository;
 import com.wharf.backend.repository.ProjectVaultRepository;
 import com.wharf.backend.repository.UserRepository;
+import com.wharf.backend.services.mail.ActorContext;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import com.wharf.backend.services.vault.VaultBlobCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,6 +65,8 @@ public class ProjectService {
     private final UserRepository userRepository;
     private final ProjectAccessService access;
     private final VaultBlobCodec blobCodec;
+    private final ProjectNotificationService notifications;
+    private final ActorContextResolver actorContextResolver;
 
     public ProjectService(ProjectRepository projectRepository,
                           ProjectVaultRepository projectVaultRepository,
@@ -70,7 +74,9 @@ public class ProjectService {
                           ProjectInviteRepository inviteRepository,
                           UserRepository userRepository,
                           ProjectAccessService access,
-                          VaultBlobCodec blobCodec) {
+                          VaultBlobCodec blobCodec,
+                          ProjectNotificationService notifications,
+                          ActorContextResolver actorContextResolver) {
         this.projectRepository = projectRepository;
         this.projectVaultRepository = projectVaultRepository;
         this.memberRepository = memberRepository;
@@ -78,6 +84,8 @@ public class ProjectService {
         this.userRepository = userRepository;
         this.access = access;
         this.blobCodec = blobCodec;
+        this.notifications = notifications;
+        this.actorContextResolver = actorContextResolver;
     }
 
     @Transactional
@@ -186,9 +194,21 @@ public class ProjectService {
     @Transactional
     public void deleteProject(UUID projectId, UUID userId) {
         access.requireOwner(projectId, userId);
+
+        // Read the name and the other members before the cascade removes the rows holding them.
+        String projectName = projectRepository.findById(projectId).map(ProjectEntity::getName).orElse(null);
+        List<String> otherMemberEmails = otherMemberEmails(projectId, userId);
+
         // Cascades to the vault, members and invites via the ON DELETE CASCADE foreign keys.
         projectRepository.deleteById(projectId);
         log.debug("Deleted project {} by owner {}", projectId, userId);
+
+        if (projectName != null && !otherMemberEmails.isEmpty()) {
+            String actorEmail = emailOf(userId);
+            ActorContext actor = actorContextResolver.resolve();
+            otherMemberEmails.forEach(email ->
+                    notifications.notifyProjectDeleted(email, projectName, actorEmail, actor));
+        }
     }
 
     @Transactional(readOnly = true)
@@ -223,9 +243,27 @@ public class ProjectService {
         byte[] wrappedDek = ProjectCrypto.decodeWrappedDek(request.wrappedDek());
         ProjectMemberEntity target = memberRepository.findByProjectIdAndUserId(projectId, targetUserId)
                 .orElseThrow(() -> new ProjectMemberNotFoundException(targetUserId));
+        boolean firstKey = !target.isKeyed();
         target.setWrappedDek(wrappedDek);
         target.setKeyedAt(Instant.now());
         log.debug("Sealed DEK to member {} of project {}", targetUserId, projectId);
+
+        // Only the first sealing is news. Accepting an invite joins a member unkeyed, so this
+        // is the moment their access actually starts working — but the same endpoint also
+        // re-keys everyone after a rotation, and mailing the whole team on every rotation
+        // would train them to ignore the one mail that means something.
+        if (firstKey) {
+            notifyAccessGranted(projectId, targetUserId, actingUserId, target.getRole());
+        }
+    }
+
+    private void notifyAccessGranted(UUID projectId, UUID targetUserId, UUID actingUserId, ProjectRole role) {
+        String projectName = projectRepository.findById(projectId).map(ProjectEntity::getName).orElse(null);
+        String recipient = emailOf(targetUserId);
+        if (projectName == null || recipient == null) {
+            return;
+        }
+        notifications.notifyAccessGranted(recipient, projectName, projectId, role, emailOf(actingUserId));
     }
 
     @Transactional
@@ -240,6 +278,7 @@ public class ProjectService {
         byte[] blob = blobCodec.decodeAndValidate(request.vault());
         List<ProjectMemberEntity> members = memberRepository.findByProjectId(projectId);
 
+        String removedEmail = null;
         if (request.removeUserId() != null) {
             ProjectMemberEntity target = memberOfOrNull(members, request.removeUserId());
             if (target == null) {
@@ -253,6 +292,7 @@ public class ProjectService {
             }
             members.remove(target);
             memberRepository.delete(target);
+            removedEmail = emailOf(request.removeUserId());
         }
 
         // Validate every provided wrapped key up front (target is a remaining member + correct
@@ -282,6 +322,16 @@ public class ProjectService {
 
         log.debug("Rotated project {} DEK to version {} ({} members re-keyed)",
                 projectId, vault.getVersion(), newWraps.size());
+
+        // Removal is only expressible as a rotation, so this is the only place a member can
+        // learn their access ended. Without it their hosts simply vanish on the next sync.
+        if (removedEmail != null) {
+            String projectName = projectRepository.findById(projectId).map(ProjectEntity::getName).orElse(null);
+            if (projectName != null) {
+                notifications.notifyRemoved(removedEmail, projectName, emailOf(userId),
+                        actorContextResolver.resolve());
+            }
+        }
         return new VaultUpdateResponse(vault.getVersion(), vault.getUpdatedAt());
     }
 
@@ -302,15 +352,33 @@ public class ProjectService {
             return;
         }
 
+        ProjectRole previousRole = target.getRole();
         if (newRole == ProjectRole.OWNER) {
             // Ownership transfer: promote the target and atomically demote the current owner,
             // preserving the single-owner invariant.
             target.setRole(ProjectRole.OWNER);
             owner.setRole(ProjectRole.ADMIN);
             log.debug("Transferred ownership of project {} from {} to {}", projectId, actingUserId, targetUserId);
+            // The outgoing owner is told too: they did initiate it, but losing the ability to
+            // delete the project is worth a record they can point at later.
+            notifyRoleChanged(projectId, actingUserId, ProjectRole.OWNER, ProjectRole.ADMIN, actingUserId);
         } else {
             target.setRole(newRole);
         }
+        if (previousRole != newRole) {
+            notifyRoleChanged(projectId, targetUserId, previousRole, newRole, actingUserId);
+        }
+    }
+
+    private void notifyRoleChanged(UUID projectId, UUID targetUserId,
+                                   ProjectRole previousRole, ProjectRole newRole, UUID actingUserId) {
+        String projectName = projectRepository.findById(projectId).map(ProjectEntity::getName).orElse(null);
+        String recipient = emailOf(targetUserId);
+        if (projectName == null || recipient == null) {
+            return;
+        }
+        notifications.notifyRoleChanged(recipient, projectName, projectId, previousRole, newRole,
+                emailOf(actingUserId), actorContextResolver.resolve());
     }
 
     @Transactional
@@ -321,6 +389,21 @@ public class ProjectService {
         }
         memberRepository.delete(member);
         log.debug("Member {} left project {}", userId, projectId);
+    }
+
+    private String emailOf(UUID userId) {
+        return userRepository.findById(userId).map(UserEntity::getEmail).orElse(null);
+    }
+
+    /** Addresses of everyone in the project except {@code excludedUserId}. */
+    private List<String> otherMemberEmails(UUID projectId, UUID excludedUserId) {
+        List<UUID> ids = memberRepository.findByProjectId(projectId).stream()
+                .map(ProjectMemberEntity::getUserId)
+                .filter(id -> !id.equals(excludedUserId))
+                .toList();
+        return ids.isEmpty()
+                ? List.of()
+                : userRepository.findAllById(ids).stream().map(UserEntity::getEmail).toList();
     }
 
     private static <T> Map<UUID, T> mapById(List<T> entities, Function<T, UUID> idExtractor) {

@@ -20,14 +20,14 @@ class MailClientConfigTest {
 
     @Test
     void mailPort_isNoop_whenApiKeyBlank() {
-        runner.withBean(MailProperties.class, () -> new MailProperties(BASE_URL, ""))
+        runner.withBean(MailProperties.class, () -> new MailProperties(BASE_URL, "", "https://wharf.example", "wharf.example"))
                 .run(context -> assertThat(context.getBean(MailPort.class))
                         .isInstanceOf(NoopMailClient.class));
     }
 
     @Test
     void mailPort_isRealClient_whenApiKeyConfigured() {
-        runner.withBean(MailProperties.class, () -> new MailProperties(BASE_URL, "mk_key_secret"))
+        runner.withBean(MailProperties.class, () -> new MailProperties(BASE_URL, "mk_key_secret", "https://wharf.example", "wharf.example"))
                 .run(context -> assertThat(context.getBean(MailPort.class))
                         .isInstanceOf(MailServiceClient.class));
     }

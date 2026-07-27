@@ -12,6 +12,8 @@ import com.wharf.backend.model.exception.EmailNotVerifiedException;
 import com.wharf.backend.repository.DeviceCodeRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
+import com.wharf.backend.services.auth.SecurityNotificationService;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,6 +44,11 @@ class DeviceCodeServiceTest {
     @Mock
     private JwtService jwtService;
 
+    @Mock
+    private SecurityNotificationService securityNotifications;
+    @Mock
+    private ActorContextResolver actorContextResolver;
+
     private DeviceCodeService deviceCodeService;
 
     private final UUID userId = UUID.randomUUID();
@@ -47,7 +56,8 @@ class DeviceCodeServiceTest {
     @BeforeEach
     void setUp() {
         deviceCodeService = new DeviceCodeService(deviceCodeRepository, userRepository, jwtService,
-                new DeviceCodeProperties(Duration.ofMinutes(10)));
+                new DeviceCodeProperties(Duration.ofMinutes(10)),
+                securityNotifications, actorContextResolver);
     }
 
     private UserEntity user() {
@@ -83,6 +93,34 @@ class DeviceCodeServiceTest {
         assertThat(code.getUsedAt()).isNotNull();
         assertThat(response.accessToken()).isEqualTo("id-token");
         assertThat(response.refreshToken()).isEqualTo("refresh-token");
+    }
+
+    /**
+     * Pairing hands a long-lived session to a client the account holder may never have
+     * touched, and nothing about the exchange is kept beyond "this code was spent" — so the
+     * mail sent from the live request is the only record anyone ever sees of it.
+     */
+    @Test
+    void exchange_validCode_notifiesTheAccountHolder() {
+        DeviceCodeEntity code = DeviceCodeEntity.builder()
+                .id(UUID.randomUUID()).userId(userId).codeHash("hash")
+                .expiresAt(Instant.now().plusSeconds(300)).createdAt(Instant.now()).build();
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.of(code));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user()));
+
+        deviceCodeService.exchange(new DeviceCodeExchangeRequest("k7pq-m2xr", "laptop"));
+
+        verify(securityNotifications).notifyDevicePaired(eq("deniz@acme.io"), eq("laptop"), any());
+    }
+
+    @Test
+    void exchange_unusableCode_notifiesNobody() {
+        when(deviceCodeRepository.findAndLockByCodeHash(any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> deviceCodeService.exchange(new DeviceCodeExchangeRequest("k7pq-m2xr", "laptop")))
+                .isInstanceOf(DeviceCodeNotFoundException.class);
+
+        verifyNoInteractions(securityNotifications);
     }
 
     @Test

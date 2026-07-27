@@ -3,6 +3,7 @@ package com.wharf.backend.security.ratelimit;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.wharf.backend.configuration.RateLimitProperties;
+import com.wharf.backend.security.ClientIpResolver;
 import com.wharf.backend.security.ProblemDetailWriter;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
@@ -47,14 +48,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final RateLimitProperties properties;
     private final ProblemDetailWriter problemDetailWriter;
+    private final ClientIpResolver clientIpResolver;
     private final Cache<String, Bucket> buckets = Caffeine.newBuilder()
             .maximumSize(MAX_TRACKED_CLIENTS)
             .expireAfterAccess(BUCKET_IDLE_EXPIRY)
             .build();
 
-    public RateLimitFilter(RateLimitProperties properties, ProblemDetailWriter problemDetailWriter) {
+    public RateLimitFilter(RateLimitProperties properties,
+                           ProblemDetailWriter problemDetailWriter,
+                           ClientIpResolver clientIpResolver) {
         this.properties = properties;
         this.problemDetailWriter = problemDetailWriter;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Override
@@ -116,17 +121,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private String clientIp(HttpServletRequest request) {
-        // By default the socket peer address is the only trustworthy source: a client can
-        // put any value in X-Forwarded-For. Only when a trusted proxy (Traefik) sits in
-        // front and overwrites the header do we read it — its first entry is then the real
-        // client IP. Gated by rate-limit.trust-forwarded-header (see application-prod).
-        if (properties.trustForwardedHeader()) {
-            String forwarded = request.getHeader("X-Forwarded-For");
-            if (forwarded != null && !forwarded.isBlank()) {
-                return forwarded.split(",")[0].trim();
-            }
-        }
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 
     private enum Category {

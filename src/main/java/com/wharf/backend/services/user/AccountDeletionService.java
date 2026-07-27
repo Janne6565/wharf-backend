@@ -18,6 +18,10 @@ import com.wharf.backend.repository.ProjectRepository;
 import com.wharf.backend.repository.ProjectVaultRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.repository.VaultRepository;
+import com.wharf.backend.services.auth.SecurityNotificationService;
+import com.wharf.backend.services.mail.ActorContext;
+import com.wharf.backend.services.mail.ActorContextResolver;
+import com.wharf.backend.services.project.ProjectNotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -58,6 +62,9 @@ public class AccountDeletionService {
     private final DeviceCodeRepository deviceCodeRepository;
     private final VaultRepository vaultRepository;
     private final PasswordEncoder passwordEncoder;
+    private final SecurityNotificationService securityNotifications;
+    private final ProjectNotificationService projectNotifications;
+    private final ActorContextResolver actorContextResolver;
 
     public AccountDeletionService(UserRepository userRepository,
                                   ProjectRepository projectRepository,
@@ -67,7 +74,10 @@ public class AccountDeletionService {
                                   OAuthIdentityRepository oauthIdentityRepository,
                                   DeviceCodeRepository deviceCodeRepository,
                                   VaultRepository vaultRepository,
-                                  PasswordEncoder passwordEncoder) {
+                                  PasswordEncoder passwordEncoder,
+                                  SecurityNotificationService securityNotifications,
+                                  ProjectNotificationService projectNotifications,
+                                  ActorContextResolver actorContextResolver) {
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.memberRepository = memberRepository;
@@ -77,6 +87,9 @@ public class AccountDeletionService {
         this.deviceCodeRepository = deviceCodeRepository;
         this.vaultRepository = vaultRepository;
         this.passwordEncoder = passwordEncoder;
+        this.securityNotifications = securityNotifications;
+        this.projectNotifications = projectNotifications;
+        this.actorContextResolver = actorContextResolver;
     }
 
     /**
@@ -119,6 +132,11 @@ public class AccountDeletionService {
 
         List<ProjectMemberEntity> memberships = memberRepository.findByUserId(userId);
         List<UUID> ownedProjectIds = ownedProjectIds(memberships);
+        String actorEmail = user.getEmail();
+
+        // Read who is about to lose what *before* anything is deleted. Afterwards the rows
+        // that name them are gone, and there is no second chance to work out who to tell.
+        List<DoomedProject> doomed = collectDoomedProjects(ownedProjectIds, userId);
 
         // 1. Owned projects go entirely — members, invites, vault, then the project row.
         int otherMembersEvicted = 0;
@@ -162,6 +180,48 @@ public class AccountDeletionService {
 
         log.info("Deleted account {} — {} owned project(s) destroyed, {} other member(s) lost access",
                 userId, ownedProjectIds.size(), otherMembersEvicted);
+
+        // Notifications last, once the destructive work has succeeded. They are enqueued on the
+        // mail executor rather than sent here, so a slow mail service cannot hold this
+        // transaction open; the trade-off is that a rollback after this point would leave
+        // mails already in flight, which is why nothing else happens below.
+        ActorContext actor = actorContextResolver.resolve();
+        securityNotifications.notifyAccountDeleted(actorEmail, ownedProjectIds.size(), actor);
+        for (DoomedProject project : doomed) {
+            // From an evicted member's side there is no difference between the owner deleting
+            // the project and the owner deleting themselves, so they get the same mail.
+            project.memberEmails().forEach(member ->
+                    projectNotifications.notifyProjectDeleted(member, project.name(), actorEmail, actor));
+        }
+    }
+
+    /**
+     * The projects about to be destroyed and the addresses of everyone <em>other than</em> the
+     * departing owner who is in them. Must be called before the deletion begins.
+     */
+    private List<DoomedProject> collectDoomedProjects(List<UUID> ownedProjectIds, UUID departingUserId) {
+        List<DoomedProject> doomed = new ArrayList<>(ownedProjectIds.size());
+        for (UUID projectId : ownedProjectIds) {
+            List<UUID> otherMemberIds = memberRepository.findByProjectId(projectId).stream()
+                    .map(ProjectMemberEntity::getUserId)
+                    .filter(memberId -> !memberId.equals(departingUserId))
+                    .toList();
+            if (otherMemberIds.isEmpty()) {
+                continue;
+            }
+            String name = projectRepository.findById(projectId).map(ProjectEntity::getName).orElse(null);
+            if (name == null) {
+                continue;
+            }
+            doomed.add(new DoomedProject(name, userRepository.findAllById(otherMemberIds).stream()
+                    .map(UserEntity::getEmail)
+                    .toList()));
+        }
+        return doomed;
+    }
+
+    /** A project that is about to be destroyed, and who needs telling. */
+    private record DoomedProject(String name, List<String> memberEmails) {
     }
 
     /**

@@ -25,6 +25,7 @@ import com.wharf.backend.security.JwtService;
 import com.wharf.backend.security.TokenType;
 import com.wharf.backend.services.vault.VaultService;
 import org.springframework.dao.DataIntegrityViolationException;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -59,13 +61,17 @@ class AuthServiceTest {
     private JwtService jwtService;
     @Mock
     private EmailVerificationService emailVerificationService;
+    @Mock
+    private SecurityNotificationService securityNotifications;
+    @Mock
+    private ActorContextResolver actorContextResolver;
 
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         authService = new AuthService(userRepository, vaultService, passwordEncoder, jwtService,
-                emailVerificationService);
+                emailVerificationService, securityNotifications, actorContextResolver);
     }
 
     /** A fully onboarded account: registered *and* email-verified. */
@@ -438,6 +444,76 @@ class AuthServiceTest {
                 new ChangePasswordRequest("cur", "new-auth", "bmV3")))
                 .isInstanceOf(PasswordNotSetException.class);
         verify(vaultService, never()).replaceOnPasswordChange(any(), any());
+    }
+
+    /**
+     * Wharf has no server-side activity log, so these mails are the only way an account
+     * holder can learn that someone else changed how their account is entered. A silent
+     * security-relevant change is the failure mode worth a test of its own.
+     */
+    @Test
+    void recoverReset_notifiesTheAccountHolder() {
+        UserEntity user = user("deniz@acme.io");
+        when(userRepository.findByEmail("deniz@acme.io")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("recovery", "recovery-hash")).thenReturn(true);
+        when(passwordEncoder.encode(any())).thenReturn("new-hash");
+
+        authService.recoverReset(new RecoveryResetRequest(
+                "deniz@acme.io", "recovery", "new-auth", "new-recovery", "dmF1bHQ=", TokenMode.DIRECT));
+
+        verify(securityNotifications).notifyRecoveryCodeUsed(eq("deniz@acme.io"), any());
+    }
+
+    @Test
+    void recoverReset_wrongCode_notifiesNobody() {
+        UserEntity user = user("deniz@acme.io");
+        when(userRepository.findByEmail("deniz@acme.io")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong", "recovery-hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.recoverReset(new RecoveryResetRequest(
+                "deniz@acme.io", "wrong", "new-auth", "new-recovery", "dmF1bHQ=", TokenMode.DIRECT)))
+                .isInstanceOf(InvalidRecoveryCodeException.class);
+
+        verifyNoInteractions(securityNotifications);
+    }
+
+    @Test
+    void changePassword_notifiesTheAccountHolder() {
+        UserEntity user = user("deniz@acme.io");
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("cur", "auth-hash")).thenReturn(true);
+        when(passwordEncoder.encode("new-auth")).thenReturn("new-hash");
+        when(vaultService.replaceOnPasswordChange(any(), any()))
+                .thenReturn(new VaultUpdateResponse(2L, Instant.now()));
+
+        authService.changePassword(user.getId(), new ChangePasswordRequest("cur", "new-auth", "bmV3"));
+
+        verify(securityNotifications).notifyPasswordChanged(eq("deniz@acme.io"), any());
+    }
+
+    /** Creating the vault is the ordinary continuation of signing up and warrants no alert. */
+    @Test
+    void setupAccount_notifiesOnlyWhenAPasswordWasActuallySet() {
+        UserEntity oauthUser = oauthOnlyUser();
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(vaultService.existsForUser(oauthUser.getId())).thenReturn(false);
+
+        authService.setupAccount(oauthUser.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", null));
+
+        verifyNoInteractions(securityNotifications);
+    }
+
+    @Test
+    void setupAccount_withPassword_notifiesThatOneWasSet() {
+        UserEntity oauthUser = oauthOnlyUser();
+        when(userRepository.findById(oauthUser.getId())).thenReturn(Optional.of(oauthUser));
+        when(vaultService.existsForUser(oauthUser.getId())).thenReturn(false);
+
+        authService.setupAccount(oauthUser.getId(),
+                new AccountSetupRequest("new-recovery", "dmF1bHQ=", "new-auth"));
+
+        verify(securityNotifications).notifyPasswordSet(eq(oauthUser.getEmail()), any());
     }
 
     @Test

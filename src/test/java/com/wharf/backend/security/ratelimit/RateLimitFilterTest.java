@@ -1,6 +1,7 @@
 package com.wharf.backend.security.ratelimit;
 
 import com.wharf.backend.configuration.RateLimitProperties;
+import com.wharf.backend.security.ClientIpResolver;
 import com.wharf.backend.security.ProblemDetailWriter;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +37,8 @@ class RateLimitFilterTest {
                 50, Duration.ofMinutes(1),
                 VERIFY_CAPACITY, Duration.ofMinutes(1),
                 50, Duration.ofHours(1));
-        filter = new RateLimitFilter(properties, new ProblemDetailWriter(new ObjectMapper()));
+        filter = new RateLimitFilter(properties, new ProblemDetailWriter(new ObjectMapper()),
+                new ClientIpResolver(properties));
     }
 
     private int statusAfterPost(String path) throws Exception {

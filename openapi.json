@@ -1316,6 +1316,98 @@
                 }
             }
         },
+        "/api/v1/users/me/notifications": {
+            "get": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Get the account's collaboration-mail preferences",
+                "description": "Returns all seven keys, always. Security notices (recovery code used, master password changed/set, device paired, sign-in provider linked, account deleted) are not listed: they have no key and cannot be turned off.",
+                "operationId": "getNotificationPreferences",
+                "responses": {
+                    "200": {
+                        "description": "Preferences returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "patch": {
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Change one or more collaboration-mail preferences",
+                "description": "Partial: only the keys present are changed. Send a single key to toggle one notification, or all seven to set the whole group at once. Every key is validated before any is applied, so one bad key changes nothing. Returns the full, updated set.",
+                "operationId": "updateNotificationPreferences",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateNotificationPreferencesRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Preferences updated; full set returned",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Empty body, a null value, or an unknown key \u2014 including any attempt to name a security notice (code: unknown_notification_preference)",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/api/v1/projects/{id}": {
             "get": {
                 "tags": [
@@ -2648,6 +2740,48 @@
                         ]
                     }
                 }
+            },
+            "UpdateNotificationPreferencesRequest": {
+                "required": [
+                    "preferences"
+                ],
+                "type": "object",
+                "properties": {
+                    "preferences": {
+                        "minProperties": 1,
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "boolean",
+                            "example": false
+                        },
+                        "example": {
+                            "inviteDeclined": false
+                        }
+                    }
+                },
+                "description": "Notification preferences to change, keyed by the stable notification key. Only the keys present are modified. An unknown key is rejected \u2014 including the security notices, which have no key and cannot be turned off."
+            },
+            "NotificationPreferencesResponse": {
+                "type": "object",
+                "properties": {
+                    "preferences": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "boolean",
+                            "example": false
+                        },
+                        "example": {
+                            "projectInvite": true,
+                            "inviteAccepted": true,
+                            "inviteDeclined": true,
+                            "projectAccessGranted": true,
+                            "projectAccessRemoved": true,
+                            "roleChanged": true,
+                            "projectDeleted": false
+                        }
+                    }
+                },
+                "description": "Collaboration-mail preferences, keyed by the stable notification key. Always contains all seven keys. Security notices are not represented: they cannot be turned off."
             },
             "UpdateProjectRequest": {
                 "type": "object",

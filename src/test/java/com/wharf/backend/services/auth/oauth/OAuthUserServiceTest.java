@@ -6,6 +6,10 @@ import com.wharf.backend.model.core.OAuthProvider;
 import com.wharf.backend.model.exception.UnverifiedAccountConflictException;
 import com.wharf.backend.repository.OAuthIdentityRepository;
 import com.wharf.backend.repository.UserRepository;
+import com.wharf.backend.services.auth.SecurityNotificationService;
+import com.wharf.backend.services.mail.ActorContextResolver;
+import static org.mockito.Mockito.mock;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,12 +37,17 @@ class OAuthUserServiceTest {
     private OAuthIdentityRepository identityRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private SecurityNotificationService securityNotifications;
+    @Mock
+    private ActorContextResolver actorContextResolver;
 
     private OAuthUserService service;
 
     @BeforeEach
     void setUp() {
-        service = new OAuthUserService(identityRepository, userRepository);
+        service = new OAuthUserService(identityRepository, userRepository,
+                securityNotifications, actorContextResolver);
     }
 
     private UserEntity user(String email) {
@@ -105,6 +116,38 @@ class OAuthUserServiceTest {
         assertThat(result.isEmailVerified()).isTrue();
         verify(userRepository).save(any(UserEntity.class));
         verify(identityRepository).save(any(OAuthIdentityEntity.class));
+    }
+
+    /**
+     * Adding a way into an account that already exists is an access change its owner has to
+     * be able to notice — but only then. In the create case the link *is* the registration,
+     * and there is no prior owner to warn.
+     */
+    @Test
+    void autoLinkingToAnExistingAccount_notifiesItsOwner() {
+        UserEntity existing = user("deniz@acme.io");
+        when(identityRepository.findByProviderAndSubject(OAuthProvider.GOOGLE, "goog-1"))
+                .thenReturn(Optional.empty());
+        when(userRepository.findByEmail("deniz@acme.io")).thenReturn(Optional.of(existing));
+
+        service.findOrCreateAndLink(OAuthProvider.GOOGLE,
+                new OAuthUserIdentity("goog-1", "deniz@acme.io", true));
+
+        verify(securityNotifications).notifyProviderLinked(
+                eq("deniz@acme.io"), eq(OAuthProvider.GOOGLE), any());
+    }
+
+    @Test
+    void creatingAFreshOAuthAccount_notifiesNobody() {
+        when(identityRepository.findByProviderAndSubject(OAuthProvider.GOOGLE, "goog-2"))
+                .thenReturn(Optional.empty());
+        when(userRepository.findByEmail("new@acme.io")).thenReturn(Optional.empty());
+        when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.findOrCreateAndLink(OAuthProvider.GOOGLE,
+                new OAuthUserIdentity("goog-2", "new@acme.io", true));
+
+        verifyNoInteractions(securityNotifications);
     }
 
     @Test

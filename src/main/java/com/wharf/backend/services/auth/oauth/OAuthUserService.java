@@ -7,6 +7,8 @@ import com.wharf.backend.model.exception.UnverifiedAccountConflictException;
 import com.wharf.backend.repository.OAuthIdentityRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.services.auth.EmailNormalizer;
+import com.wharf.backend.services.auth.SecurityNotificationService;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,10 +34,17 @@ public class OAuthUserService {
 
     private final OAuthIdentityRepository identityRepository;
     private final UserRepository userRepository;
+    private final SecurityNotificationService securityNotifications;
+    private final ActorContextResolver actorContextResolver;
 
-    public OAuthUserService(OAuthIdentityRepository identityRepository, UserRepository userRepository) {
+    public OAuthUserService(OAuthIdentityRepository identityRepository,
+                            UserRepository userRepository,
+                            SecurityNotificationService securityNotifications,
+                            ActorContextResolver actorContextResolver) {
         this.identityRepository = identityRepository;
         this.userRepository = userRepository;
+        this.securityNotifications = securityNotifications;
+        this.actorContextResolver = actorContextResolver;
     }
 
     /**
@@ -59,11 +68,21 @@ public class OAuthUserService {
         }
 
         String email = EmailNormalizer.normalize(identity.email());
-        UserEntity user = userRepository.findByEmail(email)
+        Optional<UserEntity> existingAccount = userRepository.findByEmail(email);
+        boolean joiningExistingAccount = existingAccount.isPresent();
+        UserEntity user = existingAccount
                 .map(OAuthUserService::requireVerifiedForLinking)
                 .orElseGet(() -> createOAuthUser(email));
 
         linkIdentity(provider, identity, user, email);
+
+        // Only the auto-link case is worth a security notice: a new sign-in method was added
+        // to an account that already existed, which is an access change its owner must be able
+        // to notice. Case 3 above (a fresh OAuth-only account) links an identity too, but there
+        // the link *is* the registration and there is no prior owner to warn.
+        if (joiningExistingAccount) {
+            securityNotifications.notifyProviderLinked(email, provider, actorContextResolver.resolve());
+        }
         return user;
     }
 

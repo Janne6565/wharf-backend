@@ -1,5 +1,7 @@
 package com.wharf.backend.client;
 
+import com.wharf.backend.services.mail.MailContent;
+
 /**
  * Outbound port for transactional email. The application talks to an external mail
  * delivery service through this interface only, so business code never depends on the
@@ -12,12 +14,11 @@ package com.wharf.backend.client;
 public interface MailPort {
 
     /**
-     * Deliver a single message. Never throws — failures are logged and dropped.
+     * Deliver a single message as {@code multipart/alternative}. Never throws — failures are
+     * logged and dropped.
      *
-     * @param recipient the destination email address
-     * @param subject   the message subject
-     * @param body      the message body (plain text or HTML depending on {@code html})
-     * @param html      {@code true} to render the body as HTML, {@code false} for plain text
+     * @param recipient the destination address
+     * @param content   the rendered subject and both body representations
      */
-    void send(String recipient, String subject, String body, boolean html);
+    void send(String recipient, MailContent content);
 }

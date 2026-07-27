@@ -28,6 +28,7 @@ import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.security.TokenType;
 import com.wharf.backend.services.UserMapper;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import com.wharf.backend.services.vault.VaultService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +62,8 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final EmailVerificationService emailVerificationService;
+    private final SecurityNotificationService securityNotifications;
+    private final ActorContextResolver actorContextResolver;
 
     /**
      * A valid bcrypt hash, generated once, that unknown-email login/recovery attempts are
@@ -73,12 +76,16 @@ public class AuthService {
                        VaultService vaultService,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
-                       EmailVerificationService emailVerificationService) {
+                       EmailVerificationService emailVerificationService,
+                       SecurityNotificationService securityNotifications,
+                       ActorContextResolver actorContextResolver) {
         this.userRepository = userRepository;
         this.vaultService = vaultService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.emailVerificationService = emailVerificationService;
+        this.securityNotifications = securityNotifications;
+        this.actorContextResolver = actorContextResolver;
         this.dummyKeyHash = passwordEncoder.encode(DUMMY_KEY);
     }
 
@@ -196,6 +203,10 @@ public class AuthService {
 
         log.debug("Recovery reset completed for account {} (token version now v{})",
                 user.getId(), user.getTokenVersion());
+        // The one path into an account that does not require the master password, so it is
+        // also the shape a takeover takes. Since there is no server-side activity log to
+        // check afterwards, this mail is the account holder's only chance to notice.
+        securityNotifications.notifyRecoveryCodeUsed(user.getEmail(), actorContextResolver.resolve());
         return issue(user, request.tokenModeOrDefault());
     }
 
@@ -240,6 +251,11 @@ public class AuthService {
             user.setAuthKeyHash(passwordEncoder.encode(request.authKey()));
         }
         log.debug("Completed account setup for {} (password login: {})", userId, request.hasAuthKey());
+        if (request.hasAuthKey()) {
+            // Only when a password was actually set. Creating the vault alone is the ordinary
+            // continuation of signing up and warrants no alert.
+            securityNotifications.notifyPasswordSet(user.getEmail(), actorContextResolver.resolve());
+        }
     }
 
     /**
@@ -264,6 +280,7 @@ public class AuthService {
         VaultUpdateResponse updated = vaultService.replaceOnPasswordChange(userId, request.vault());
 
         log.debug("Master password changed for account {} (vault now v{})", userId, updated.version());
+        securityNotifications.notifyPasswordChanged(user.getEmail(), actorContextResolver.resolve());
         return updated;
     }
 

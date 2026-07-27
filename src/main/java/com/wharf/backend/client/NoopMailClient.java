@@ -1,5 +1,6 @@
 package com.wharf.backend.client;
 
+import com.wharf.backend.services.mail.MailContent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +14,8 @@ public class NoopMailClient implements MailPort {
     private static final Logger log = LoggerFactory.getLogger(NoopMailClient.class);
 
     @Override
-    public void send(String recipient, String subject, String body, boolean html) {
-        log.debug("Mail delivery not configured; dropping message to {} (subject: {})", recipient, subject);
+    public void send(String recipient, MailContent content) {
+        log.debug("Mail delivery not configured; dropping message to {} (subject: {})",
+                recipient, content.subject());
     }
 }

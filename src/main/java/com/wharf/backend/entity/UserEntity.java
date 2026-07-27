@@ -74,6 +74,46 @@ public class UserEntity {
     @Column(name = "public_key_updated_at")
     private Instant publicKeyUpdatedAt;
 
+    /**
+     * Per-notification opt-outs for <em>collaboration</em> mail, all defaulting to on.
+     *
+     * <p>The security notices have deliberately no field here. There must be no value in the
+     * schema capable of switching them off: with no password reset, no support-side recovery
+     * and no server-side activity log, email is the only channel through which an account
+     * holder can learn that someone else took control of their account.
+     *
+     * <p>Read and written through {@link com.wharf.backend.model.core.NotificationPreference},
+     * which owns the mapping from the stable API/column key to these accessors — so the seven
+     * flags are enumerated in exactly one place.
+     */
+    @Builder.Default
+    @Column(name = "notify_project_invite", nullable = false)
+    private boolean notifyProjectInvite = true;
+
+    @Builder.Default
+    @Column(name = "notify_invite_accepted", nullable = false)
+    private boolean notifyInviteAccepted = true;
+
+    @Builder.Default
+    @Column(name = "notify_invite_declined", nullable = false)
+    private boolean notifyInviteDeclined = true;
+
+    @Builder.Default
+    @Column(name = "notify_project_access_granted", nullable = false)
+    private boolean notifyProjectAccessGranted = true;
+
+    @Builder.Default
+    @Column(name = "notify_project_access_removed", nullable = false)
+    private boolean notifyProjectAccessRemoved = true;
+
+    @Builder.Default
+    @Column(name = "notify_role_changed", nullable = false)
+    private boolean notifyRoleChanged = true;
+
+    @Builder.Default
+    @Column(name = "notify_project_deleted", nullable = false)
+    private boolean notifyProjectDeleted = true;
+
     /** JPA optimistic-lock version — guards against lost updates on concurrent account writes. */
     @Version
     @Column(name = "version", nullable = false)

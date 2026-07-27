@@ -3,9 +3,11 @@ package com.wharf.backend.controller.v1.schema;
 import com.wharf.backend.configuration.OpenApiConfig;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.DeleteAccountRequest;
+import com.wharf.backend.model.action.UpdateNotificationPreferencesRequest;
 import com.wharf.backend.model.action.UpdatePublicKeyRequest;
 import com.wharf.backend.model.core.AccountDeletionPreviewResponse;
 import com.wharf.backend.model.core.MyInviteResponse;
+import com.wharf.backend.model.core.NotificationPreferencesResponse;
 import com.wharf.backend.model.core.ProjectSummaryResponse;
 import com.wharf.backend.model.core.UserProfileResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +19,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -82,6 +85,34 @@ public interface UserApi {
     @ApiResponse(responseCode = "409", description = "A key already exists and rotate was not set")
     ResponseEntity<Void> updatePublicKey(@AuthenticationPrincipal UserEntity user,
                                          @Valid @RequestBody UpdatePublicKeyRequest request);
+
+    @GetMapping("/me/notifications")
+    @Operation(operationId = "getNotificationPreferences",
+            summary = "Get the account's collaboration-mail preferences",
+            description = "Returns all seven keys, always. Security notices (recovery code used, master "
+                    + "password changed/set, device paired, sign-in provider linked, account deleted) are not "
+                    + "listed: they have no key and cannot be turned off.",
+            security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
+    @ApiResponse(responseCode = "200", description = "Preferences returned")
+    @ApiResponse(responseCode = "401", description = "Not authenticated")
+    ResponseEntity<NotificationPreferencesResponse> getNotificationPreferences(
+            @AuthenticationPrincipal UserEntity user);
+
+    @PatchMapping("/me/notifications")
+    @Operation(operationId = "updateNotificationPreferences",
+            summary = "Change one or more collaboration-mail preferences",
+            description = "Partial: only the keys present are changed. Send a single key to toggle one "
+                    + "notification, or all seven to set the whole group at once. Every key is validated before "
+                    + "any is applied, so one bad key changes nothing. Returns the full, updated set.",
+            security = @SecurityRequirement(name = OpenApiConfig.BEARER_SCHEME))
+    @ApiResponse(responseCode = "200", description = "Preferences updated; full set returned")
+    @ApiResponse(responseCode = "400",
+            description = "Empty body, a null value, or an unknown key — including any attempt to name a "
+                    + "security notice (code: unknown_notification_preference)")
+    @ApiResponse(responseCode = "401", description = "Not authenticated")
+    ResponseEntity<NotificationPreferencesResponse> updateNotificationPreferences(
+            @AuthenticationPrincipal UserEntity user,
+            @Valid @RequestBody UpdateNotificationPreferencesRequest request);
 
     @GetMapping("/me/invites")
     @Operation(operationId = "getMyInvites",

@@ -14,6 +14,8 @@ import com.wharf.backend.repository.DeviceCodeRepository;
 import com.wharf.backend.repository.UserRepository;
 import com.wharf.backend.security.JwtService;
 import com.wharf.backend.services.UserMapper;
+import com.wharf.backend.services.auth.SecurityNotificationService;
+import com.wharf.backend.services.mail.ActorContextResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,16 +47,22 @@ public class DeviceCodeService {
     private final UserRepository userRepository;
     private final JwtService jwtService;
     private final DeviceCodeProperties properties;
+    private final SecurityNotificationService securityNotifications;
+    private final ActorContextResolver actorContextResolver;
     private final SecureRandom random = new SecureRandom();
 
     public DeviceCodeService(DeviceCodeRepository deviceCodeRepository,
                              UserRepository userRepository,
                              JwtService jwtService,
-                             DeviceCodeProperties properties) {
+                             DeviceCodeProperties properties,
+                             SecurityNotificationService securityNotifications,
+                             ActorContextResolver actorContextResolver) {
         this.deviceCodeRepository = deviceCodeRepository;
         this.userRepository = userRepository;
         this.jwtService = jwtService;
         this.properties = properties;
+        this.securityNotifications = securityNotifications;
+        this.actorContextResolver = actorContextResolver;
     }
 
     @Transactional
@@ -105,6 +113,12 @@ public class DeviceCodeService {
 
         log.debug("Device code exchanged for user {} (device: {})",
                 user.getId(), request.deviceName() == null ? "unnamed" : request.deviceName());
+        // Pairing hands a long-lived session to a client the account holder may never have
+        // touched, and nothing about the exchange is persisted beyond "this code was spent" —
+        // so the notice is sent from the live request, carrying details we deliberately do
+        // not keep. The device name is whatever the client called itself, and is not trusted.
+        securityNotifications.notifyDevicePaired(
+                user.getEmail(), request.deviceName(), actorContextResolver.resolve());
         return new SessionResponse(UserMapper.toDto(user),
                 jwtService.issueIdentityToken(user),
                 jwtService.issueRefreshToken(user));

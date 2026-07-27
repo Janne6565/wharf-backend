@@ -38,6 +38,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -235,6 +236,62 @@ class ProjectInviteServiceTest {
         service.decline(user, inviteId);
 
         verify(inviteRepository).delete(inv);
+    }
+
+    /**
+     * The accept-then-finalize flow means an admin has to come back and seal the project key
+     * before the new member can read anything. Without this mail the only way to notice
+     * somebody is waiting is to poll the pending-keys list.
+     */
+    @Test
+    void accept_reportsTheAnswerBackToTheInviter() {
+        UserEntity user = invitee();
+        ProjectInviteEntity inv = invite(Instant.now().plusSeconds(3600));
+        when(inviteRepository.findById(inviteId)).thenReturn(Optional.of(inv));
+        when(memberRepository.existsByProjectIdAndUserId(projectId, user.getId())).thenReturn(true);
+        when(memberRepository.findByProjectIdAndUserId(projectId, user.getId())).thenReturn(Optional.of(
+                ProjectMemberEntity.builder().id(UUID.randomUUID()).projectId(projectId)
+                        .userId(user.getId()).role(ProjectRole.MEMBER).createdAt(Instant.now()).build()));
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(
+                ProjectEntity.builder().id(projectId).name("Acme").createdAt(Instant.now()).build()));
+        when(userRepository.findById(adminId)).thenReturn(Optional.of(
+                UserEntity.builder().id(adminId).email("admin@acme.io").build()));
+        when(memberRepository.countByProjectId(projectId)).thenReturn(2L);
+
+        service.accept(user, inviteId);
+
+        verify(inviteNotifications).notifyInviteAccepted(
+                eq("admin@acme.io"), eq(user.getEmail()), eq("Acme"), eq(projectId), eq(2L));
+    }
+
+    @Test
+    void decline_reportsTheAnswerBackToTheInviter() {
+        UserEntity user = invitee();
+        when(inviteRepository.findById(inviteId)).thenReturn(Optional.of(invite(Instant.now().plusSeconds(3600))));
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(
+                ProjectEntity.builder().id(projectId).name("Acme").createdAt(Instant.now()).build()));
+        when(userRepository.findById(adminId)).thenReturn(Optional.of(
+                UserEntity.builder().id(adminId).email("admin@acme.io").build()));
+        when(memberRepository.countByProjectId(projectId)).thenReturn(1L);
+
+        service.decline(user, inviteId);
+
+        verify(inviteNotifications).notifyInviteDeclined(
+                eq("admin@acme.io"), eq(user.getEmail()), eq("Acme"), eq(projectId), eq(1L));
+    }
+
+    /** The answer is already recorded; failing to report it must not undo that. */
+    @Test
+    void decline_inviterVanished_stillSucceeds() {
+        UserEntity user = invitee();
+        ProjectInviteEntity inv = invite(Instant.now().plusSeconds(3600));
+        when(inviteRepository.findById(inviteId)).thenReturn(Optional.of(inv));
+        when(userRepository.findById(adminId)).thenReturn(Optional.empty());
+
+        service.decline(user, inviteId);
+
+        verify(inviteRepository).delete(inv);
+        verifyNoInteractions(inviteNotifications);
     }
 
     @Test

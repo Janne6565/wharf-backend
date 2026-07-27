@@ -19,11 +19,30 @@ public record MailProperties(
         String baseUrl,
 
         @DefaultValue("")
-        String apiKey
+        String apiKey,
+
+        /**
+         * Origin every link in an email is built from. Absolute URLs are mandatory in mail —
+         * there is no document to resolve a relative path against — and they must point at the
+         * deployment that actually sent the message, so this is configured rather than
+         * hardcoded (local dev sends links to localhost, production to the public host).
+         */
+        @DefaultValue("https://wharf.jannekeipert.de")
+        String appBaseUrl,
+
+        /** The bare domain shown as the last line of every footer, so the sender is identifiable. */
+        @DefaultValue("wharf.jannekeipert.de")
+        String sendingDomain
 ) {
 
     /** Mail delivery is enabled only when an API key is supplied. */
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    /** Absolute URL for an in-app path, e.g. {@code url("/projects")}. */
+    public String url(String path) {
+        String base = appBaseUrl.endsWith("/") ? appBaseUrl.substring(0, appBaseUrl.length() - 1) : appBaseUrl;
+        return path.startsWith("/") ? base + path : base + "/" + path;
     }
 }

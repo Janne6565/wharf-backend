@@ -170,6 +170,7 @@ public class ProjectInviteService {
             throw new InviteExpiredException();
         }
         UUID projectId = invite.getProjectId();
+        UUID inviterId = invite.getInvitedBy();
 
         // Already a member (e.g. a duplicate/concurrent accept): consume the invite and return
         // the project summary rather than failing.
@@ -190,14 +191,43 @@ public class ProjectInviteService {
 
         ProjectMemberEntity membership = memberRepository.findByProjectIdAndUserId(projectId, user.getId())
                 .orElseThrow(() -> new ProjectNotFoundException(projectId));
+        notifyInviteAnswered(projectId, inviterId, user.getEmail(), true);
         return buildSummary(projectId, membership);
     }
 
     @Transactional
     public void decline(UserEntity user, UUID inviteId) {
         ProjectInviteEntity invite = requireInviteAddressedTo(user, inviteId);
+        UUID projectId = invite.getProjectId();
+        UUID inviterId = invite.getInvitedBy();
         inviteRepository.delete(invite);
         log.debug("User {} declined invite {}", user.getId(), inviteId);
+        notifyInviteAnswered(projectId, inviterId, user.getEmail(), false);
+    }
+
+    /**
+     * Report the outcome back to whoever sent the invite. Best-effort in the same way the
+     * invite mail itself is: the answer has already been recorded, and failing to tell the
+     * inviter about it must not undo that.
+     */
+    private void notifyInviteAnswered(UUID projectId, UUID inviterId, String inviteeEmail, boolean accepted) {
+        try {
+            String inviterEmail = userRepository.findById(inviterId).map(UserEntity::getEmail).orElse(null);
+            String projectName = projectRepository.findById(projectId).map(ProjectEntity::getName).orElse(null);
+            if (inviterEmail == null || projectName == null) {
+                return;
+            }
+            long memberCount = memberRepository.countByProjectId(projectId);
+            if (accepted) {
+                inviteNotifications.notifyInviteAccepted(
+                        inviterEmail, inviteeEmail, projectName, projectId, memberCount);
+            } else {
+                inviteNotifications.notifyInviteDeclined(
+                        inviterEmail, inviteeEmail, projectName, projectId, memberCount);
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Failed to enqueue invite-answer notification for project {}", projectId, ex);
+        }
     }
 
     private ProjectInviteEntity requireInviteOfProject(UUID projectId, UUID inviteId) {

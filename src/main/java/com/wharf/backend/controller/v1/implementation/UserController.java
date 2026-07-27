@@ -3,13 +3,16 @@ package com.wharf.backend.controller.v1.implementation;
 import com.wharf.backend.controller.v1.schema.UserApi;
 import com.wharf.backend.entity.UserEntity;
 import com.wharf.backend.model.action.DeleteAccountRequest;
+import com.wharf.backend.model.action.UpdateNotificationPreferencesRequest;
 import com.wharf.backend.model.action.UpdatePublicKeyRequest;
 import com.wharf.backend.model.core.AccountDeletionPreviewResponse;
 import com.wharf.backend.model.core.MyInviteResponse;
+import com.wharf.backend.model.core.NotificationPreferencesResponse;
 import com.wharf.backend.model.core.ProjectSummaryResponse;
 import com.wharf.backend.model.core.UserProfileResponse;
 import com.wharf.backend.services.project.ProjectInviteService;
 import com.wharf.backend.services.user.AccountDeletionService;
+import com.wharf.backend.services.user.NotificationPreferencesService;
 import com.wharf.backend.services.user.UserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -23,13 +26,16 @@ public class UserController implements UserApi {
     private final UserService userService;
     private final AccountDeletionService accountDeletionService;
     private final ProjectInviteService projectInviteService;
+    private final NotificationPreferencesService notificationPreferencesService;
 
     public UserController(UserService userService,
                           AccountDeletionService accountDeletionService,
-                          ProjectInviteService projectInviteService) {
+                          ProjectInviteService projectInviteService,
+                          NotificationPreferencesService notificationPreferencesService) {
         this.userService = userService;
         this.accountDeletionService = accountDeletionService;
         this.projectInviteService = projectInviteService;
+        this.notificationPreferencesService = notificationPreferencesService;
     }
 
     @Override
@@ -54,6 +60,17 @@ public class UserController implements UserApi {
     public ResponseEntity<Void> updatePublicKey(UserEntity user, UpdatePublicKeyRequest request) {
         userService.updatePublicKey(user.getId(), request);
         return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<NotificationPreferencesResponse> getNotificationPreferences(UserEntity user) {
+        return ResponseEntity.ok(notificationPreferencesService.get(user.getId()));
+    }
+
+    @Override
+    public ResponseEntity<NotificationPreferencesResponse> updateNotificationPreferences(
+            UserEntity user, UpdateNotificationPreferencesRequest request) {
+        return ResponseEntity.ok(notificationPreferencesService.update(user.getId(), request));
     }
 
     @Override
