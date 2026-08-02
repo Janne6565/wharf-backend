@@ -2,7 +2,7 @@
 
 Sync, device-code pairing and encrypted vault storage for [Wharf](https://github.com/Janne6565/wharf-tui) —
 a local-first, keyboard-driven terminal SSH client. An account is **optional** and only
-adds the online features (cross-machine sync, and later team projects).
+adds the online features (cross-machine sync and team projects).
 
 The service is **zero-knowledge**: it only ever stores ciphertext vault blobs and bcrypt
 hashes of client-derived credential keys. **It never sees your password or the plaintext
