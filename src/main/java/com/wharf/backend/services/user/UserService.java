@@ -53,10 +53,18 @@ public class UserService {
     }
 
     /**
-     * Publish or rotate the account's public key. Rotating replaces the key <em>and</em>
-     * invalidates every wrapped DEK the account holds: because the private key changed, none
-     * of the old sealed boxes open any more, so each affected membership re-enters the
-     * awaiting-key state until an admin re-seals the project DEK to the new public key.
+     * Publish, rotate or upgrade the account's public key. Rotating replaces the key
+     * <em>and</em> invalidates every wrapped DEK the account holds: because the private key
+     * changed, none of the old sealed boxes open any more, so each affected membership
+     * re-enters the awaiting-key state until an admin re-seals the project DEK to the new
+     * public key.
+     *
+     * <p>Upgrading replaces the key and <em>keeps</em> the wrapped DEKs. It exists for the
+     * v1 -> v2 hybrid migration, where the new key embeds the same X25519 key and the
+     * existing sealed boxes therefore still open — so forcing every project of every user
+     * through awaiting-access would be pure churn. Zero-knowledge means the server cannot
+     * check that claim; it does not have to, because a client that upgrades to an unrelated
+     * key only makes its own DEKs unopenable, which a real rotate then fixes.
      */
     @Transactional
     public void updatePublicKey(UUID userId, UpdatePublicKeyRequest request) {
@@ -65,14 +73,18 @@ public class UserService {
                 .orElseThrow(() -> new UserNotFoundException(userId));
 
         boolean alreadySet = user.getPublicKey() != null;
-        if (alreadySet && !request.rotate()) {
+        boolean upgradeRequested = Boolean.TRUE.equals(request.upgrade());
+        if (alreadySet && !request.rotate() && !upgradeRequested) {
             throw new PublicKeyAlreadySetException();
         }
 
         user.setPublicKey(publicKey);
         user.setPublicKeyUpdatedAt(Instant.now());
 
-        if (request.rotate() && alreadySet) {
+        boolean upgrade = !request.rotate() && upgradeRequested && alreadySet;
+        if (upgrade) {
+            log.debug("Upgraded public key for {}; wrapped keys preserved", userId);
+        } else if (request.rotate() && alreadySet) {
             List<ProjectMemberEntity> memberships = memberRepository.findByUserId(userId);
             for (ProjectMemberEntity membership : memberships) {
                 membership.setWrappedDek(null);

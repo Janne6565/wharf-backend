@@ -82,17 +82,53 @@ The Go client (wharf-tui `internal/vault`) and the browser client (wharf-web
 The 32-byte header (magic + version + body nonce) is the AEAD's additional data, so any
 edit to it fails authentication. A fresh nonce is drawn on every seal.
 
-**DEK wrapping — X25519 sealed box:** the project DEK is shared with a member by sealing
-it to their X25519 public key with libsodium's `crypto_box_seal` (NaCl anonymous box). The
-wrapped DEK is **exactly 80 bytes**: 32-byte ephemeral public key + 32-byte DEK + 16-byte
-Poly1305 tag. The sender needs no long-term key (an ephemeral keypair is generated per
-wrap); only the recipient's private key can `crypto_box_seal_open` it.
+**DEK wrapping — v1, X25519 sealed box:** the project DEK is shared with a member by
+sealing it to their X25519 public key with libsodium's `crypto_box_seal` (NaCl anonymous
+box). The wrapped DEK is **exactly 80 bytes**: 32-byte ephemeral public key + 32-byte DEK
++ 16-byte Poly1305 tag. The sender needs no long-term key (an ephemeral keypair is
+generated per wrap); only the recipient's private key can `crypto_box_seal_open` it.
 
-**Identity storage:** each member's X25519 **private key never leaves their encrypted
-personal vault** — it is stored inside the WHARFV payload document, which gains an optional
-`identity: { x25519Priv, x25519Pub, createdAt }` field (personal-vault document schema
-bumps 1 → 2; schema-1 documents remain valid with `identity` absent). Only the matching
-**public** key is published to the server for others to wrap DEKs to.
+**DEK wrapping — v2, hybrid post-quantum.** v1 is classical, and the server keeps every
+wrapped DEK indefinitely: an attacker who copies the database today decrypts all of it once
+a cryptographically relevant quantum computer exists. v2 closes that by adding
+**ML-KEM-768** (FIPS 203) *around* the v1 sealed box rather than replacing it:
+
+```
+identity pub  = 0x02 || X25519 pub (32) || ML-KEM-768 ek (1184)          = 1217 bytes
+identity priv = 0x02 || X25519 priv (32) || ML-KEM-768 seed (64)         =   97 bytes
+wrapped DEK   = 0x02 || ML-KEM ct (1088) || nonce (24) ||
+                XChaCha20-Poly1305(key = HKDF-SHA256(ss, "wharf/dek-wrap/v2"),
+                                   aad = 0x02 || ct,
+                                   plaintext = the 80-byte v1 sealed box)= 1209 bytes
+```
+
+Opening a v2 blob requires the ML-KEM decapsulation key **and** the X25519 private key, so
+it stays secure if either primitive is broken. v1 values carry no version prefix and are
+recognised by their exact length; the server accepts both lengths and, as ever, never looks
+inside. Clients wrap in **the recipient's** version, never their own preference, so an
+upgraded client can still key a member who has not upgraded.
+
+The ML-KEM private half is stored as its 64-byte FIPS 203 (d, z) seed and expanded on use;
+Go's `crypto/mlkem` and `@noble/post-quantum` derive the same keypair from the same seed
+(pinned by the committed `project-fixture.json`, which carries both a v1 and a v2 wrap of
+one DEK).
+
+**Migration.** A v2 identity keeps the X25519 keypair it upgraded from, so its hybrid
+public key embeds the old key and **every already-wrapped DEK still opens**. That is why
+`PUT /users/me/public-key` grows an `upgrade` mode: it replaces the published key while
+*keeping* the wrapped DEKs, where `rotate` would null them and push every project into
+awaiting-access for nothing. Zero-knowledge means the server cannot verify the claim that
+the new key embeds the old one; it does not need to, because a client that upgrades to an
+unrelated key only makes its own DEKs unopenable, which a real `rotate` then fixes. Clients
+run the upgrade **only after** confirming the published key is theirs — upgrading first
+would overwrite a substituted key and hide the substitution the check exists to catch.
+
+**Identity storage:** each member's **private key never leaves their encrypted personal
+vault** — it is stored inside the WHARFV payload document, which gains an optional
+`identity: { x25519Priv, x25519Pub, mlkemSeed?, createdAt }` field (personal-vault document
+schema bumps 1 → 2 for the identity, 3 → 4 for `mlkemSeed`; older documents remain valid
+with the fields absent). Only the matching **public** key is published to the server for
+others to wrap DEKs to.
 
 **Trust caveat (v1):** the server distributes members' public keys, so it is trusted not to
 substitute them — a malicious or compromised server could perform a **man-in-the-middle**
@@ -155,7 +191,7 @@ Account public key (used to seal DEKs against):
 | Method & path | Body | Result |
 |---------------|------|--------|
 | `GET /users/me` | — | now also returns `publicKey` (base64 or null) |
-| `PUT /users/me/public-key` | `{publicKey, rotate}` | `204` — publish (or, with `rotate=true`, replace) the account's 32-byte X25519 public key. `400` if not 32 bytes; `409` if a key exists and `rotate=false`. Rotating also **nulls every wrapped DEK the account holds**, so each membership re-enters the awaiting-key state |
+| `PUT /users/me/public-key` | `{publicKey, rotate, upgrade}` | `204` — publish the account's identity public key: 32 bytes (v1) or 1217 bytes (v2 hybrid). `400` on any other length; `409` if a key exists and neither `rotate` nor `upgrade` is set. `rotate=true` replaces the key and **nulls every wrapped DEK the account holds**, so each membership re-enters the awaiting-key state; `upgrade=true` replaces the key and **keeps** them (the v1 → v2 migration, where the new key embeds the old X25519 key) |
 
 Projects & membership:
 
@@ -177,7 +213,7 @@ Key distribution:
 | Method & path | Body | Result |
 |---------------|------|--------|
 | `GET /projects/{id}/pending-keys` | — | `[{userId, email, publicKey}]` — admin+; members awaiting a key who have published a public key to seal against |
-| `POST /projects/{id}/members/{userId}/key` | `{wrappedDek, vaultVersion}` | `204` — admin+; seals the DEK to a member. `400` if the wrapped key is not 80 bytes; `409` if `vaultVersion` != the current vault version (guards wrapping a stale DEK across a rotation) |
+| `POST /projects/{id}/members/{userId}/key` | `{wrappedDek, vaultVersion}` | `204` — admin+; seals the DEK to a member. `400` if the wrapped key is neither 80 (v1) nor 1209 (v2) bytes; `409` if `vaultVersion` != the current vault version (guards wrapping a stale DEK across a rotation) |
 
 Invites (the invitee is notified by email *and* sees the invite in their own listing):
 
@@ -194,9 +230,10 @@ Invites (the invitee is notified by email *and* sees the invite in their own lis
 - The **project vault** is opaque WHARFP ciphertext, treated exactly like the personal
   vault: never parsed, base64-encoded on the wire, capped at `vault.max-size-bytes`, with a
   monotonic `version` for optimistic concurrency.
-- Each project has **one DEK**. It is distributed to members as **80-byte X25519 sealed
-  boxes** (`wrappedDek`) wrapped against each member's published 32-byte public key. The
-  server stores these sealed boxes and hands them out; it never unwraps or uses them.
+- Each project has **one DEK**. It is distributed to members as `wrappedDek` values wrapped
+  against each member's published public key — an 80-byte X25519 sealed box for a v1
+  member, a 1209-byte hybrid ML-KEM-768 wrap for a v2 one. The server stores these and hands
+  them out; it never unwraps or uses them.
 - A member with a `null` wrapped DEK is **awaiting key**: they have joined but no admin has
   sealed the DEK to their public key yet, so they cannot open the vault (reads return a null
   `wrappedDek`, writes are `403`).

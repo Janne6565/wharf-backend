@@ -315,4 +315,87 @@ class ProjectsFlowIntegrationTest {
         assertThat(json(mockMvc.perform(get("/api/v1/projects").header("Authorization", bearer(aToken)))
                 .andExpect(status().isOk()).andReturn())).isEmpty();
     }
+
+    /**
+     * The v1 -> v2 hybrid key migration. Upgrading publishes the longer post-quantum key
+     * while KEEPING every wrapped DEK — the new key embeds the old X25519 key, so the
+     * existing sealed boxes still open and no project may be knocked into awaiting-access.
+     * A real rotate still resets them.
+     */
+    @Test
+    void hybridKeyUpgradePreservesWrappedKeysWhileRotateStillResetsThem() throws Exception {
+        String token = register("pq@acme.io");
+        publishPublicKey(token, 10);
+
+        String create = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("name", "PQ").put("description", "")
+                .put("vault", base64("proj-v1")).put("wrappedDek", bytes(80, 1)));
+        MvcResult created = mockMvc.perform(post("/api/v1/projects")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON).content(create))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String projectId = json(created).path("id").asText();
+
+        // A second plain publish is still refused — upgrade must be asked for explicitly.
+        String republish = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("publicKey", bytes(1217, 11)).put("rotate", false));
+        mockMvc.perform(put("/api/v1/users/me/public-key")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON).content(republish))
+                .andExpect(status().isConflict());
+
+        // Upgrade to the v2 key: accepted at the hybrid length, wrapped DEK untouched.
+        String upgrade = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("publicKey", bytes(1217, 11)).put("rotate", false).put("upgrade", true));
+        mockMvc.perform(put("/api/v1/users/me/public-key")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON).content(upgrade))
+                .andExpect(status().isNoContent());
+
+        MvcResult afterUpgrade = mockMvc.perform(get("/api/v1/projects/" + projectId + "/vault")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(json(afterUpgrade).path("wrappedDek").asText()).isEqualTo(bytes(80, 1));
+
+        // A hybrid-length wrapped DEK is accepted too (the v2 rewrap of that project).
+        ObjectNode rewrap = objectMapper.createObjectNode();
+        rewrap.put("vault", base64("proj-v2"));
+        rewrap.put("expectedVersion", 1);
+        ArrayNode keys = rewrap.putArray("wrappedKeys");
+        keys.addObject().put("userId", userRepository.findByEmail("pq@acme.io").map(UserEntity::getId)
+                .orElseThrow().toString()).put("wrappedDek", bytes(1209, 12));
+        mockMvc.perform(post("/api/v1/projects/" + projectId + "/rotate")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(rewrap)))
+                .andExpect(status().isOk());
+
+        // A genuine rotate of the identity key still clears every wrapped DEK.
+        String rotateKey = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("publicKey", bytes(1217, 13)).put("rotate", true));
+        mockMvc.perform(put("/api/v1/users/me/public-key")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON).content(rotateKey))
+                .andExpect(status().isNoContent());
+
+        MvcResult afterRotate = mockMvc.perform(get("/api/v1/projects/" + projectId + "/vault")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(json(afterRotate).path("wrappedDek").isNull()).isTrue();
+    }
+
+    /** Anything that is neither a v1 nor a v2 length is still rejected outright. */
+    @Test
+    void publicKeyOfUnknownLengthIsRejected() throws Exception {
+        String token = register("badkey@acme.io");
+        String body = objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("publicKey", bytes(64, 7)).put("rotate", false));
+        mockMvc.perform(put("/api/v1/users/me/public-key")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+    }
 }
