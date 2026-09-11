@@ -55,6 +55,11 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_GET_PATHS).permitAll()
+                        // Prometheus scrape endpoint for the in-cluster Grafana Alloy agent.
+                        // Safe to permit on the app port: the public Ingress routes only /api
+                        // to the backend (everything else goes to the web server), so Traefik
+                        // never routes /actuator here.
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
                         // Account setup (OAuth onboarding) is authenticated — it must be matched
                         // before the blanket /api/v1/auth/** permitAll below (first match wins).
                         // The path still starts with /api/v1/auth, so the RateLimitFilter's
